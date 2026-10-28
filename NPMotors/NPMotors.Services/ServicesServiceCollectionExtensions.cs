@@ -13,6 +13,7 @@ namespace NPMotors.Services
         {
             services.AddScoped<ICustomerService, CustomerService>();
             services.AddScoped<IEmployeeService, EmployeeService>();
+            services.AddScoped<IVendorService, VendorService>();
 
             return services;
         }
