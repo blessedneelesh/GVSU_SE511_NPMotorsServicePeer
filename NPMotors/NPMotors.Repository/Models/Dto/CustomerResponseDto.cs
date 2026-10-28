@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -6,7 +6,7 @@ namespace NPMotors.Repository.Models.Dto
 {
     public class CustomerResponseDto
     {
-        public string Id { get; set; }
+        public long Id { get; set; }
         public string First_Name { get; set; }
         public string Last_Name { get; set; }
         public string Phone { get; set; }
