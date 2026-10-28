@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="Module.Tests/Module.Tests.csproj" Id="a094b3ac-58a9-4b0d-ba00-4360b03188ad" />
   <Project Path="NPMotors.Peer/NPMotors.Peer.csproj" />
   <Project Path="NPMotors.PeerApplication/NPMotors.PeerApplication.csproj" />
   <Project Path="NPMotors.Repository.Tests/NPMotors.Repository.Tests.csproj" Id="8fed271f-ac5c-4be0-8d58-af2eaa32f3ed" />

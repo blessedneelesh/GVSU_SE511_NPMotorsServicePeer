@@ -12,17 +12,17 @@ namespace NPMotors.Repository.Models.Dto
         [Required, StringLength(100)]
         public string Last_Name { get; set; }
         [StringLength(30)]
-        public string Phone { get; set; }
+        public string? Phone { get; set; }
         [Required, EmailAddress, StringLength(255)]
         public string Email { get; set; }
         [StringLength(255)]
-        public string Address { get; set; }
+        public string? Address { get; set; }
         [StringLength(100)]
-        public string City { get; set; }
+        public string? City { get; set; }
         [StringLength(50)]
-        public string State { get; set; }
+        public string? State { get; set; }
         [StringLength(20)]
-        public string Zip { get; set; }
+        public string? Zip { get; set; }
         [RegularExpression("(?i)^(active|inactive)$", ErrorMessage = "Status must be 'active' or 'inactive'.")]
         public string Status { get; set; } = "active";
     }
