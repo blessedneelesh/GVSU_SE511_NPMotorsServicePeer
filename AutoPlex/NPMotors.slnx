@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="NPMotors.Peer/NPMotors.Peer.csproj" />
+  <Project Path="NPMotors.PeerApplication/NPMotors.PeerApplication.csproj" />
+  <Project Path="NPMotors.Repository/NPMotors.Repository.csproj" />
+  <Project Path="NPMotors.Services.Abstraction/NPMotors.Services.Abstractions.csproj" />
+  <Project Path="NPMotors.Services/NPMotors.Services.csproj" />
+</Solution>

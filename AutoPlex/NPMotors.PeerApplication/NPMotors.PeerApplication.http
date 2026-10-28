@@ -1,0 +1,6 @@
+@NPMotors.PeerApplication_HostAddress = http://localhost:5182
+
+GET {{NPMotors.PeerApplication_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
