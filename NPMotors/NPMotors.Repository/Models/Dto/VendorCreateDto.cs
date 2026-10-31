@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using NPMotors.Repository.Models.Enums;
 
 namespace NPMotors.Repository.Models.Dto
 {
@@ -19,7 +20,6 @@ namespace NPMotors.Repository.Models.Dto
         public string? Address { get; set; }
         [Required, RegularExpression("(?i)^(vehicle|parts|service)$", ErrorMessage = "Type must be 'Vehicle', 'Parts' or 'Service'.")]
         public string Type { get; set; }
-        [RegularExpression("(?i)^(active|inactive)$", ErrorMessage = "Status must be 'active' or 'inactive'.")]
-        public string Status { get; set; } = "active";
+        public Status Status { get; set; } = Status.Active;
     }
 }

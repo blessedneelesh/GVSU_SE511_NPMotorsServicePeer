@@ -1,5 +1,6 @@
 using Dapper;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
 using NPMotors.Repository.RequestFeatures;
 
@@ -29,7 +30,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         // Reuses an existing test row (matched by this test run's marker) if present, otherwise inserts one.
         private async Task<VendorResponseDto> InsertTestVendorAsync(
-            string suffix = "a", string status = "active", string type = "Parts")
+            string suffix = "a", Status status = Status.Active, string type = "Parts")
         {
             var email = $"{_marker}-{suffix}@example.com";
 
@@ -92,14 +93,14 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetAllVendors_FiltersByStatus()
         {
             // Arrange
-            var active = await InsertTestVendorAsync("active", "active");
-            var inactive = await InsertTestVendorAsync("inactive", "inactive");
+            var active = await InsertTestVendorAsync("active", Status.Active);
+            var inactive = await InsertTestVendorAsync("inactive", Status.Inactive);
 
             // Act
             var inactiveResult = await _repository.GetAllVendors(
-                new VendorParameters { SearchTerm = _marker, Status = "inactive" });
+                new VendorParameters { SearchTerm = _marker, Status = Status.Inactive });
             var activeResult = await _repository.GetAllVendors(
-                new VendorParameters { SearchTerm = _marker, Status = "ACTIVE" });
+                new VendorParameters { SearchTerm = _marker, Status = Status.Active });
 
             // Assert
             Assert.Single(inactiveResult);
@@ -164,9 +165,9 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetActiveVendors_ExcludesInactiveAndFiltersByType()
         {
             // Arrange
-            var activeParts = await InsertTestVendorAsync("activeparts", "active", "Parts");
-            var inactiveParts = await InsertTestVendorAsync("inactiveparts", "inactive", "Parts");
-            var activeVehicle = await InsertTestVendorAsync("activevehicle", "active", "Vehicle");
+            var activeParts = await InsertTestVendorAsync("activeparts", Status.Active, "Parts");
+            var inactiveParts = await InsertTestVendorAsync("inactiveparts", Status.Inactive, "Parts");
+            var activeVehicle = await InsertTestVendorAsync("activevehicle", Status.Active, "Vehicle");
 
             // Act
             var all = (await _repository.GetActiveVendors())
@@ -194,7 +195,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Email = $"{_marker}-create@example.com",
                 Address = "2 Test St",
                 Type = "Vehicle",
-                Status = "INACTIVE"
+                Status = Status.Inactive
             };
 
             // Act
@@ -208,7 +209,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(dto.Name, reloaded!.Name);
             Assert.Equal(dto.Email, reloaded.Email);
             Assert.Equal("Vehicle", reloaded.Type);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
             Assert.Equal(0m, reloaded.Balance);
             Assert.Equal(0m, reloaded.TotalPurchases);
         }
@@ -258,7 +259,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Email = $"{_marker}-updated@example.com",
                 Address = "99 Updated Ave",
                 Type = "Service",
-                Status = "active"
+                Status = Status.Active
             };
 
             // Act
@@ -285,7 +286,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             {
                 Name = inserted.Name,
                 Type = inserted.Type!,
-                Status = "Inactive"
+                Status = Status.Inactive
             };
 
             // Act
@@ -294,7 +295,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
             // Assert
             Assert.NotNull(updated);
-            Assert.Equal("inactive", updated!.Status);
+            Assert.Equal(Status.Inactive, updated!.Status);
             Assert.DoesNotContain(activeVendors, v => v.Id == inserted.Id);
         }
 
@@ -306,7 +307,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             {
                 Name = $"{_marker} Ghost",
                 Type = "Parts",
-                Status = "active"
+                Status = Status.Active
             };
 
             // Act

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Newtonsoft.Json;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
 
 namespace Module.Tests.Controllers
@@ -42,7 +43,7 @@ namespace Module.Tests.Controllers
             Email = $"{_marker}-{suffix}@example.com",
             Address = "1 Test St",
             Type = "Parts",
-            Status = "active"
+            Status = Status.Active
         };
 
         private async Task<VendorResponseDto> CreateVendorAsync(string suffix = "a", Action<VendorCreateDto>? customize = null)
@@ -86,7 +87,7 @@ namespace Module.Tests.Controllers
             var inactiveVehicle = await CreateVendorAsync("inactivevehicle", d =>
             {
                 d.Type = "Vehicle";
-                d.Status = "inactive";
+                d.Status = Status.Inactive;
             });
 
             // Act
@@ -135,7 +136,7 @@ namespace Module.Tests.Controllers
         {
             // Arrange
             var active = await CreateVendorAsync("active");
-            var inactive = await CreateVendorAsync("inactive", d => d.Status = "inactive");
+            var inactive = await CreateVendorAsync("inactive", d => d.Status = Status.Inactive);
 
             // Act
             var response = await _testClient.GetAsync("Vendor/GetActiveVendors");
@@ -236,8 +237,9 @@ namespace Module.Tests.Controllers
         public async Task AddVendor_Returns400_WhenStatusIsInvalid()
         {
             // Arrange
-            var invalid = NewVendorDto("badstatus");
-            invalid.Status = "pending";
+            var invalid = JsonConvert.DeserializeObject<Dictionary<string, object?>>(
+                JsonConvert.SerializeObject(NewVendorDto("badstatus")))!;
+            invalid["status"] = "pending";
 
             // Act
             var response = await _testClient.PostAsync("Vendor/AddVendor", Json(invalid));
@@ -259,7 +261,7 @@ namespace Module.Tests.Controllers
                 Email = $"{_marker}-updated@example.com",
                 Address = "99 Updated Ave",
                 Type = "service",
-                Status = "inactive"
+                Status = Status.Inactive
             };
 
             // Act
@@ -271,7 +273,7 @@ namespace Module.Tests.Controllers
             Assert.NotNull(reloaded);
             Assert.Equal(update.Name, reloaded!.Name);
             Assert.Equal("Service", reloaded.Type);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
             Assert.Equal(0m, reloaded.Balance);
         }
 
@@ -280,7 +282,7 @@ namespace Module.Tests.Controllers
         {
             // Arrange
             var created = await CreateVendorAsync();
-            var update = new VendorUpdateDto { Name = created.Name, Type = "Hardware", Status = "active" };
+            var update = new VendorUpdateDto { Name = created.Name, Type = "Hardware", Status = Status.Active };
 
             // Act
             var response = await _testClient.PutAsync($"Vendor/UpdateVendor?id={created.Id}", Json(update));
@@ -293,7 +295,7 @@ namespace Module.Tests.Controllers
         public async Task UpdateVendor_Returns404_WhenNotFound()
         {
             // Arrange
-            var update = new VendorUpdateDto { Name = $"{_marker} Ghost", Type = "Parts", Status = "active" };
+            var update = new VendorUpdateDto { Name = $"{_marker} Ghost", Type = "Parts", Status = Status.Active };
 
             // Act
             var response = await _testClient.PutAsync("Vendor/UpdateVendor?id=-1", Json(update));

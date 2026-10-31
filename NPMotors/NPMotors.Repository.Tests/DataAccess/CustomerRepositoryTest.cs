@@ -1,4 +1,5 @@
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
 using NPMotors.Repository.RequestFeatures;
 
@@ -27,7 +28,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         // Reuses an existing test row (matched by this test run's marker) if present, otherwise inserts one.
-        private async Task<CustomerResponseDto> InsertTestCustomerAsync(string suffix = "a", string status = "active")
+        private async Task<CustomerResponseDto> InsertTestCustomerAsync(string suffix = "a", Status status = Status.Active)
         {
             var email = $"{_marker}-{suffix}@example.com";
 
@@ -92,14 +93,14 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetAllCustomers_FiltersByStatus()
         {
             // Arrange
-            var active = await InsertTestCustomerAsync("active", "active");
-            var inactive = await InsertTestCustomerAsync("inactive", "inactive");
+            var active = await InsertTestCustomerAsync("active", Status.Active);
+            var inactive = await InsertTestCustomerAsync("inactive", Status.Inactive);
 
             // Act
             var inactiveResult = await _repository.GetAllCustomers(
-                new CustomerParameters { SearchTerm = _marker, Status = "inactive" });
+                new CustomerParameters { SearchTerm = _marker, Status = Status.Inactive });
             var activeResult = await _repository.GetAllCustomers(
-                new CustomerParameters { SearchTerm = _marker, Status = "ACTIVE" });
+                new CustomerParameters { SearchTerm = _marker, Status = Status.Active });
 
             // Assert
             Assert.Single(inactiveResult);
@@ -158,7 +159,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 City = "Grand Rapids",
                 State = "MI",
                 Zip = "49503",
-                Status = "INACTIVE"
+                Status = Status.Inactive
             };
 
             // Act
@@ -172,7 +173,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(dto.First_Name, reloaded!.First_Name);
             Assert.Equal(dto.Email, reloaded.Email);
             Assert.Equal(dto.City, reloaded.City);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
             Assert.Equal(0m, reloaded.Balance);
             Assert.Equal(0m, reloaded.TotalPurchases);
         }
@@ -218,7 +219,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 City = "Holland",
                 State = "OH",
                 Zip = "43001",
-                Status = "inactive"
+                Status = Status.Inactive
             };
 
             // Act
@@ -233,7 +234,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(update.Email, reloaded.Email);
             Assert.Equal("Holland", reloaded.City);
             Assert.Equal("OH", reloaded.State);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
             Assert.Equal(inserted.Balance, reloaded.Balance);
         }
 
@@ -246,7 +247,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 First_Name = "Ghost",
                 Last_Name = _marker,
                 Email = $"{_marker}-ghost@example.com",
-                Status = "active"
+                Status = Status.Active
             };
 
             // Act

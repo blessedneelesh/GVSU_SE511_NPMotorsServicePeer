@@ -1,4 +1,5 @@
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models.Enums;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -34,13 +35,10 @@ namespace NPMotors.Repository.Repositories
             var whereClauses = new List<string>();
             var queryParams = new DynamicParameters();
 
-            var status = employeeParameters.Status?.Trim();
-            if (!string.IsNullOrWhiteSpace(status) &&
-                (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
-                 status.Equals("inactive", StringComparison.OrdinalIgnoreCase)))
+            if (employeeParameters.Status.HasValue)
             {
                 whereClauses.Add("LOWER(status) = @Status");
-                queryParams.Add("Status", status.ToLowerInvariant());
+                queryParams.Add("Status", employeeParameters.Status.Value.ToDbValue());
             }
 
             var department = employeeParameters.Department?.Trim();
@@ -120,7 +118,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Salary", employee.Salary);
             queryParams.Add("Bonus", employee.Bonus);
             queryParams.Add("Commission", employee.Commission_Rate);
-            queryParams.Add("Status", (employee.Status ?? "active").Trim().ToLowerInvariant());
+            queryParams.Add("Status", employee.Status.ToDbValue());
 
             return await connection.QuerySingleAsync<EmployeeResponseDto>(
                 $@"INSERT INTO employee (first_name, last_name, department, job, salary, bonus, commission, status)
@@ -142,7 +140,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Salary", employee.Salary);
             queryParams.Add("Bonus", employee.Bonus);
             queryParams.Add("Commission", employee.Commission_Rate);
-            queryParams.Add("Status", (employee.Status ?? "active").Trim().ToLowerInvariant());
+            queryParams.Add("Status", employee.Status.ToDbValue());
 
             return await connection.QuerySingleOrDefaultAsync<EmployeeResponseDto>(
                 $@"UPDATE employee

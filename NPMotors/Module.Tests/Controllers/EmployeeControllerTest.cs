@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Newtonsoft.Json;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
 
 namespace Module.Tests.Controllers
@@ -43,7 +44,7 @@ namespace Module.Tests.Controllers
             Salary = 50000m,
             Bonus = 1000m,
             Commission_Rate = 5m,
-            Status = "active"
+            Status = Status.Active
         };
 
         private async Task<EmployeeResponseDto> CreateEmployeeAsync(string suffix = "a", Action<EmployeeCreateDto>? customize = null)
@@ -85,7 +86,7 @@ namespace Module.Tests.Controllers
             var inactive = await CreateEmployeeAsync("inactive", d =>
             {
                 d.Department = $"{_marker}-service";
-                d.Status = "inactive";
+                d.Status = Status.Inactive;
             });
 
             // Act
@@ -153,7 +154,7 @@ namespace Module.Tests.Controllers
         {
             // Arrange
             var seller = await CreateEmployeeAsync("seller");
-            var inactiveSeller = await CreateEmployeeAsync("inactiveseller", d => d.Status = "inactive");
+            var inactiveSeller = await CreateEmployeeAsync("inactiveseller", d => d.Status = Status.Inactive);
             var nonSeller = await CreateEmployeeAsync("nonseller", d => d.Commission_Rate = 0m);
 
             // Act
@@ -266,7 +267,7 @@ namespace Module.Tests.Controllers
                 Salary = 80000m,
                 Bonus = 5000m,
                 Commission_Rate = 10m,
-                Status = "inactive"
+                Status = Status.Inactive
             };
 
             // Act
@@ -280,7 +281,7 @@ namespace Module.Tests.Controllers
             Assert.Equal("Service", reloaded.Department);
             Assert.Equal(80000m, reloaded.Salary);
             Assert.Equal(10m, reloaded.Commission_Rate);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
         }
 
         [Fact]
@@ -291,7 +292,7 @@ namespace Module.Tests.Controllers
             {
                 First_Name = "Ghost",
                 Last_Name = _marker,
-                Status = "active"
+                Status = Status.Active
             };
 
             // Act

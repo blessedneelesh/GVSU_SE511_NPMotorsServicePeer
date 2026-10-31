@@ -37,7 +37,6 @@ namespace NPMotors.Services.Service
         public Task<VendorResponseDto> AddVendor(VendorCreateDto vendor)
         {
             vendor.Type = NormalizeType(vendor.Type);
-            vendor.Status = NormalizeStatus(vendor.Status);
             Validate(vendor.Name);
             return _vendorRepository.AddVendor(vendor);
         }
@@ -45,7 +44,6 @@ namespace NPMotors.Services.Service
         public Task<VendorResponseDto?> UpdateVendor(long id, VendorUpdateDto vendor)
         {
             vendor.Type = NormalizeType(vendor.Type);
-            vendor.Status = NormalizeStatus(vendor.Status);
             Validate(vendor.Name);
             return _vendorRepository.UpdateVendor(id, vendor);
         }
@@ -72,14 +70,6 @@ namespace NPMotors.Services.Service
         {
             var match = AllowedTypes.FirstOrDefault(t => t.Equals(type?.Trim(), StringComparison.OrdinalIgnoreCase));
             return match ?? throw new ArgumentException("Type must be 'Vehicle', 'Parts' or 'Service'.");
-        }
-
-        private static string NormalizeStatus(string? status)
-        {
-            var value = (status ?? "active").Trim().ToLowerInvariant();
-            if (value != "active" && value != "inactive")
-                throw new ArgumentException("Status must be 'active' or 'inactive'.");
-            return value;
         }
     }
 }

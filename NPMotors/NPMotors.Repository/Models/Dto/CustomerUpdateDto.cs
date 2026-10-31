@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using NPMotors.Repository.Models.Enums;
 
 namespace NPMotors.Repository.Models.Dto
 {
@@ -23,7 +24,6 @@ namespace NPMotors.Repository.Models.Dto
         public string? State { get; set; }
         [StringLength(20)]
         public string? Zip { get; set; }
-        [RegularExpression("(?i)^(active|inactive)$", ErrorMessage = "Status must be 'active' or 'inactive'.")]
-        public string Status { get; set; } = "active";
+        public Status Status { get; set; } = Status.Active;
     }
 }

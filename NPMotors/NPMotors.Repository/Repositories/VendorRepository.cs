@@ -1,4 +1,5 @@
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models.Enums;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -32,13 +33,10 @@ namespace NPMotors.Repository.Repositories
             var whereClauses = new List<string>();
             var queryParams = new DynamicParameters();
 
-            var status = vendorParameters.Status?.Trim();
-            if (!string.IsNullOrWhiteSpace(status) &&
-                (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
-                 status.Equals("inactive", StringComparison.OrdinalIgnoreCase)))
+            if (vendorParameters.Status.HasValue)
             {
                 whereClauses.Add("LOWER(status) = @Status");
-                queryParams.Add("Status", status.ToLowerInvariant());
+                queryParams.Add("Status", vendorParameters.Status.Value.ToDbValue());
             }
 
             var type = vendorParameters.Type?.Trim();
@@ -122,7 +120,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Email", vendor.Email?.Trim());
             queryParams.Add("Address", vendor.Address?.Trim());
             queryParams.Add("Type", vendor.Type.Trim());
-            queryParams.Add("Status", (vendor.Status ?? "active").Trim().ToLowerInvariant());
+            queryParams.Add("Status", vendor.Status.ToDbValue());
 
             // balance and total_purchases are not written; the column defaults (0) apply.
             return await connection.QuerySingleAsync<VendorResponseDto>(
@@ -144,7 +142,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Email", vendor.Email?.Trim());
             queryParams.Add("Address", vendor.Address?.Trim());
             queryParams.Add("Type", vendor.Type.Trim());
-            queryParams.Add("Status", (vendor.Status ?? "active").Trim().ToLowerInvariant());
+            queryParams.Add("Status", vendor.Status.ToDbValue());
 
             return await connection.QuerySingleOrDefaultAsync<VendorResponseDto>(
                 $@"UPDATE vendor

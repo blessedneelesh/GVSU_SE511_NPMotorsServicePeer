@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NPMotors.Repository.Models.Enums;
 
 namespace NPMotors.Repository.Models.Dto
 {
@@ -14,7 +15,7 @@ namespace NPMotors.Repository.Models.Dto
         public decimal? Salary { get; set; }
         public decimal? Bonus { get; set; }
         public decimal? Commission_Rate { get; set; }
-        public string? Status { get; set; }
+        public Status? Status { get; set; }
         public bool Is_Salesperson { get; set; }
     }
 }

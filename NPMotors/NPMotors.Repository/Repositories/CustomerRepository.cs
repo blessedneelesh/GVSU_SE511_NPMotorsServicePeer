@@ -1,4 +1,5 @@
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models.Enums;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -27,13 +28,10 @@ namespace NPMotors.Repository.Repositories
             var whereClauses = new List<string>();
             var queryParams = new DynamicParameters();
 
-            var status = customerParameters.Status?.Trim();
-            if (!string.IsNullOrWhiteSpace(status) &&
-                (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
-                 status.Equals("inactive", StringComparison.OrdinalIgnoreCase)))
+            if (customerParameters.Status.HasValue)
             {
                 whereClauses.Add("LOWER(status) = @Status");
-                queryParams.Add("Status", status.ToLowerInvariant());
+                queryParams.Add("Status", customerParameters.Status.Value.ToDbValue());
             }
 
             var searchTerm = customerParameters.SearchTerm?.Trim();
@@ -94,7 +92,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("City", customer.City?.Trim());
             queryParams.Add("State", customer.State?.Trim());
             queryParams.Add("Zip", customer.Zip?.Trim());
-            queryParams.Add("Status", (customer.Status ?? "active").Trim().ToLowerInvariant());
+            queryParams.Add("Status", customer.Status.ToDbValue());
 
             return await connection.QuerySingleAsync<CustomerResponseDto>(
                 $@"INSERT INTO customer (first_name, last_name, phone, email, address, city, state, zip, balance, total_purchases, status)
@@ -117,7 +115,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("City", customer.City?.Trim());
             queryParams.Add("State", customer.State?.Trim());
             queryParams.Add("Zip", customer.Zip?.Trim());
-            queryParams.Add("Status", (customer.Status ?? "active").Trim().ToLowerInvariant());
+            queryParams.Add("Status", customer.Status.ToDbValue());
 
             return await connection.QuerySingleOrDefaultAsync<CustomerResponseDto>(
                 $@"UPDATE customer

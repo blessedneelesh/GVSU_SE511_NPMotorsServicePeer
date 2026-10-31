@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NPMotors.Repository.Models.Enums;
 
 namespace NPMotors.Repository.Models.Dto
 {
@@ -15,6 +16,6 @@ namespace NPMotors.Repository.Models.Dto
         public string? Type { get; set; }
         public decimal Balance { get; set; }
         public decimal TotalPurchases { get; set; }
-        public string? Status { get; set; }
+        public Status? Status { get; set; }
     }
 }
