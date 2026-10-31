@@ -12,7 +12,6 @@ namespace Module.Tests.Controllers
     {
         private BankAccountRepository _repo => new(_repositoryContext);
         private readonly string _marker = $"itest-{Guid.NewGuid():N}".Substring(0, 18);
-        private readonly List<long> _createdIds = new();
         private long _bankId;
 
         private class GetAllResponse
@@ -30,19 +29,12 @@ namespace Module.Tests.Controllers
 
         public async Task DisposeAsync()
         {
-            foreach (var id in _createdIds)
-            {
-                try
-                {
-                    await _repo.DeleteBankAccount(id);
-                }
-                catch
-                {
-                    // Keep going so one failed delete does not block the rest.
-                }
-            }
-
+            // Remove every account under the test bank (including ones created through the API), then the bank itself.
             using var connection = _repositoryContext.GetDatabaseConnection();
+            await connection.ExecuteAsync(
+                @"DELETE FROM bank_statement_line WHERE bank_account_id IN (SELECT id FROM bank_account WHERE bank_id = @Id)",
+                new { Id = _bankId });
+            await connection.ExecuteAsync("DELETE FROM bank_account WHERE bank_id = @Id", new { Id = _bankId });
             await connection.ExecuteAsync("DELETE FROM bank WHERE id = @Id", new { Id = _bankId });
         }
 
@@ -57,12 +49,8 @@ namespace Module.Tests.Controllers
             Status = Status.Active
         };
 
-        private async Task<BankAccountResponseDto> CreateAccountAsync(string suffix = "a")
-        {
-            var created = await _repo.AddBankAccount(NewAccountDto(suffix));
-            _createdIds.Add(created.Id);
-            return created;
-        }
+        private Task<BankAccountResponseDto> CreateAccountAsync(string suffix = "a") =>
+            _repo.AddBankAccount(NewAccountDto(suffix));
 
         private static StringContent Json(object? body) =>
             new(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
@@ -115,7 +103,6 @@ namespace Module.Tests.Controllers
             // Act
             var response = await _testClient.PostAsync("BankAccount/AddBankAccount", Json(dto));
             var created = await ReadAsync<BankAccountResponseDto>(response);
-            if (created != null) _createdIds.Add(created.Id);
 
             // Assert
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);

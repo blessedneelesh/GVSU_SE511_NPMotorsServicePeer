@@ -10,7 +10,6 @@ namespace NPMotors.Repository.Tests.DataAccess
     {
         private readonly BankAccountRepository _repository;
         private readonly string _marker = $"itest-{Guid.NewGuid():N}".Substring(0, 18);
-        private readonly List<long> _insertedIds = new();
         private long _bankId;
 
         public BankAccountRepositoryTest()
@@ -28,12 +27,9 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         public async Task DisposeAsync()
         {
-            foreach (var id in _insertedIds)
-            {
-                await _repository.DeleteBankAccount(id);
-            }
-
+            // Remove every account under the test bank (not just tracked ids), then the bank itself.
             using var connection = _repositoryContext.GetDatabaseConnection();
+            await connection.ExecuteAsync("DELETE FROM bank_account WHERE bank_id = @Id", new { Id = _bankId });
             await connection.ExecuteAsync("DELETE FROM bank WHERE id = @Id", new { Id = _bankId });
         }
 
@@ -41,7 +37,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             string suffix = "a", Status status = Status.Active, string type = "Checking",
             decimal openingBalance = 100m, string accountNumber = "123456789")
         {
-            var created = await _repository.AddBankAccount(new BankAccountCreateDto
+            return await _repository.AddBankAccount(new BankAccountCreateDto
             {
                 BankId = _bankId,
                 Name = $"{_marker} Account {suffix}",
@@ -51,9 +47,6 @@ namespace NPMotors.Repository.Tests.DataAccess
                 OpeningBalance = openingBalance,
                 Status = status
             });
-
-            _insertedIds.Add(created.Id);
-            return created;
         }
 
         [Fact]
