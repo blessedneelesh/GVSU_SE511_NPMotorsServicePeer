@@ -7,6 +7,8 @@ using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using System.Threading.Tasks;
 using Dapper;
+using System.Linq;
+using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Repository.Repositories
 {
@@ -48,6 +50,64 @@ namespace NPMotors.Repository.Repositories
                            @PurchasePrice, @AdditionalCosts, @PurchasePrice + @AdditionalCosts, @SellingPrice, @Status)
                    RETURNING {VehicleColumns}",
                 queryParams);
+        }
+
+        // Stored columns only; Total_Cost, Gross_Profit, Gross_Margin and Is_Available are filled by VehicleService.
+        private const string BrowseColumns =
+            "v.id, v.vendor_id, ve.name AS Vendor_Name, v.vin, v.make, v.model, v.year, v.color, v.purchase_date, v.warehouse, " +
+            "COALESCE(v.purchase_price, 0) AS Purchase_Price, v.additional_costs, " +
+            "COALESCE(v.selling_price, 0) AS Selling_Price, v.status";
+
+        private const string BrowseFrom = "FROM vehicle v JOIN vendor ve ON ve.id = v.vendor_id";
+
+        public async Task<PagedList<VehicleResponseDto>> GetAllVehicles(VehicleParameters parameters)
+        {
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+
+            var whereClauses = new List<string>();
+            var queryParams = new DynamicParameters();
+
+            var status = parameters.Status?.Trim();
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                whereClauses.Add("LOWER(v.status) = @Status");
+                queryParams.Add("Status", status.ToLowerInvariant());
+            }
+
+            var searchTerm = parameters.SearchTerm?.Trim();
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                whereClauses.Add(@"(
+                    LOWER(v.vin) LIKE @SearchTerm OR
+                    LOWER(v.make) LIKE @SearchTerm OR
+                    LOWER(v.model) LIKE @SearchTerm
+                )");
+                queryParams.Add("SearchTerm", $"%{searchTerm.ToLowerInvariant()}%");
+            }
+
+            var whereSql = whereClauses.Count > 0
+                ? " WHERE " + string.Join(" AND ", whereClauses)
+                : string.Empty;
+
+            var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {BrowseFrom}{whereSql}", queryParams);
+
+            queryParams.Add("Offset", (parameters.PageNumber - 1) * parameters.PageSize);
+            queryParams.Add("Limit", parameters.PageSize);
+
+            var vehicles = (await connection.QueryAsync<VehicleResponseDto>(
+                $"SELECT {BrowseColumns} {BrowseFrom}{whereSql} ORDER BY v.make, v.model, v.id OFFSET @Offset LIMIT @Limit",
+                queryParams)).ToList();
+
+            return new PagedList<VehicleResponseDto>(vehicles, count, parameters.PageNumber, parameters.PageSize);
+        }
+
+        public async Task<VehicleResponseDto?> GetVehicleById(long id)
+        {
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<VehicleResponseDto>(
+                $"SELECT {BrowseColumns} {BrowseFrom} WHERE v.id = @Id",
+                new { Id = id });
         }
 
         public async Task<string?> GetVendorStatus(long vendorId)

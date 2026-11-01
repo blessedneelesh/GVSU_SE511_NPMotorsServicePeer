@@ -1,4 +1,5 @@
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Abstractions.ServiceInterfaces;
 using Microsoft.AspNetCore.Mvc;
 using System;
@@ -14,6 +15,27 @@ namespace NPMotors.Peer.Controllers
         public VehicleController(IVehicleService vehicleService)
         {
             _vehicleService = vehicleService;
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> GetAllVehicles([FromQuery] VehicleParameters parameters)
+        {
+            try
+            {
+                var vehicles = await _vehicleService.GetAllVehicles(parameters);
+                return Ok(new { items = vehicles, metaData = vehicles.MetaData });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> GetVehicleById([FromQuery] long id)
+        {
+            var vehicle = await _vehicleService.GetVehicleById(id);
+            return vehicle is null ? NotFound() : Ok(vehicle);
         }
 
         [HttpPost]
