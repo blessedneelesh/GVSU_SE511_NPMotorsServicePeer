@@ -114,7 +114,6 @@ namespace NPMotors.Repository.Tests.DataAccess
             Vehicle_Id = vehicleId,
             Invoice_Date = new DateTime(2026, 5, 1),
             Due_Date = new DateTime(2026, 5, 31),
-            Sale_Price = 24000m,
             Tax = 1500m,
             Fees = 300m,
             Discount = 500m
@@ -148,7 +147,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(dto.Vehicle_Id, created.Vehicle_Id);
             Assert.Equal(new DateTime(2026, 5, 1), created.Invoice_Date);
             Assert.Equal(new DateTime(2026, 5, 31), created.Due_Date);
-            Assert.Equal(24000m, created.Sale_Price);
+            Assert.Equal(25000m, created.Sale_Price); // vehicle.selling_price
             Assert.Equal(1500m, created.Tax);
             Assert.Equal(300m, created.Fees);
             Assert.Equal(500m, created.Discount);

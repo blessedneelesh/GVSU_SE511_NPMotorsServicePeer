@@ -8,5 +8,6 @@ namespace NPMotors.Repository.Interface
     public interface ISalesInvoiceRepository
     {
         Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice);
+        Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice);
     }
 }

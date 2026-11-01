@@ -8,5 +8,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
     public interface ISalesInvoiceService
     {
         Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice);
+        Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice);
     }
 }

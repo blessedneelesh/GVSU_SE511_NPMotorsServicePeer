@@ -149,9 +149,6 @@ CREATE TABLE sales_invoice (
     CONSTRAINT uq_sales_invoice_vehicle UNIQUE (vehicle_id)
 );
 
-ALTER TABLE sales_invoices 
-  RENAME COLUMN status TO payment_status; 
-
 -- Close the VEHICLE <-> SALES_INVOICE loop ("sold through", 0..1 : 0..1)
 ALTER TABLE vehicle
     ADD CONSTRAINT fk_vehicle_invoice

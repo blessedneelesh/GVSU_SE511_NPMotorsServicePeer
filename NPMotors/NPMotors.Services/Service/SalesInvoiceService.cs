@@ -26,6 +26,16 @@ namespace NPMotors.Services.Service
             return created;
         }
 
+        public async Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
+        {
+            ValidateInvoice(invoice);
+
+            var posted = await _salesInvoiceRepository.PostSalesInvoice(invoice);
+            posted.Total = CalculateTotal(posted.Sale_Price, posted.Tax, posted.Fees, posted.Discount);
+            posted.Balance = CalculateBalance(posted.Total, posted.Paid);
+            return posted;
+        }
+
         private static decimal CalculateTotal(decimal salePrice, decimal tax, decimal fees, decimal discount)
         {
             return salePrice + tax + fees - discount;
@@ -46,18 +56,12 @@ namespace NPMotors.Services.Service
                 throw new ArgumentException("Vehicle is required.");
             if (invoice.Invoice_Date == default)
                 throw new ArgumentException("Invoice date is required.");
-            if (invoice.Sale_Price < 0)
-                throw new ArgumentException("Sale price cannot be negative.");
             if (invoice.Tax < 0)
                 throw new ArgumentException("Tax cannot be negative.");
             if (invoice.Fees < 0)
                 throw new ArgumentException("Fees cannot be negative.");
             if (invoice.Discount < 0)
                 throw new ArgumentException("Discount cannot be negative.");
-            if (invoice.Discount > invoice.Sale_Price)
-                throw new ArgumentException("Discount cannot exceed the sale price.");
-            if (CalculateTotal(invoice.Sale_Price, invoice.Tax, invoice.Fees, invoice.Discount) <= 0)
-                throw new ArgumentException("Invoice total must be greater than zero.");
         }
     }
 }

@@ -29,5 +29,19 @@ namespace NPMotors.Peer.Controllers
                 return BadRequest(new { message = ex.Message });
             }
         }
+
+        [HttpPost]
+        public async Task<IActionResult> PostSalesInvoice([FromBody] SalesInvoiceCreateDto invoice)
+        {
+            try
+            {
+                var posted = await _salesInvoiceService.PostSalesInvoice(invoice);
+                return StatusCode(201, posted);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
     }
 }

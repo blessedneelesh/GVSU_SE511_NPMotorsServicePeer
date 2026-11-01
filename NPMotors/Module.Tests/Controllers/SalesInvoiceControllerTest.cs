@@ -123,7 +123,6 @@ namespace Module.Tests.Controllers
                 Vehicle_Id = vehicle.Id,
                 Invoice_Date = new DateTime(2026, 5, 1),
                 Due_Date = new DateTime(2026, 5, 31),
-                Sale_Price = 17500m,
                 Tax = 1000m,
                 Fees = 200m,
                 Discount = 700m
@@ -253,7 +252,7 @@ namespace Module.Tests.Controllers
         public async Task AddSalesInvoice_DiscountExceedsSalePrice_Returns400()
         {
             var dto = await ValidDtoAsync();
-            dto.Discount = dto.Sale_Price + 1m;
+            dto.Discount = 1_000_000m;
 
             var response = await PostAsync(dto);
 
@@ -267,7 +266,7 @@ namespace Module.Tests.Controllers
             var dto = await ValidDtoAsync();
             dto.Tax = 0m;
             dto.Fees = 0m;
-            dto.Discount = dto.Sale_Price;
+            dto.Discount = 18000m; // the vehicle's selling price
 
             var response = await PostAsync(dto);
 
@@ -278,7 +277,7 @@ namespace Module.Tests.Controllers
         [Fact]
         public async Task AddSalesInvoice_MissingRequiredIds_Returns400()
         {
-            var response = await PostAsync(new { Invoice_Date = "2026-05-01", Sale_Price = 1000 });
+            var response = await PostAsync(new { Invoice_Date = "2026-05-01" });
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
@@ -290,15 +289,13 @@ namespace Module.Tests.Controllers
             {
                 Customer_Id = 1,
                 Salesperson_Id = 1,
-                Vehicle_Id = 1,
-                Sale_Price = 1000
+                Vehicle_Id = 1
             });
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
 
         [Theory]
-        [InlineData("Sale_Price")]
         [InlineData("Tax")]
         [InlineData("Fees")]
         [InlineData("Discount")]

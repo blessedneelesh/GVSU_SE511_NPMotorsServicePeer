@@ -26,18 +26,20 @@ namespace NPMotors.Repository.Repositories
             public string? SalespersonStatus { get; set; }
             public bool? IsSalesperson { get; set; }
             public string? VehicleStatus { get; set; }
+            public decimal? SellingPrice { get; set; }
         }
 
-        public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
+        // The sale price is never taken from the request: it is the vehicle's selling_price.
+        private static async Task ValidateSelectionAsync(IDbConnection connection, SalesInvoiceCreateDto invoice, IDbTransaction? transaction = null)
         {
-            using IDbConnection connection = _context.GetDatabaseConnection();
-
             var selection = await connection.QuerySingleAsync<SelectionStatus>(
                 @"SELECT (SELECT LOWER(status) FROM customer WHERE id = @CustomerId) AS CustomerStatus,
                          (SELECT LOWER(status) FROM employee WHERE id = @SalespersonId) AS SalespersonStatus,
                          (SELECT COALESCE(commission, 0) > 0 FROM employee WHERE id = @SalespersonId) AS IsSalesperson,
-                         (SELECT LOWER(status) FROM vehicle WHERE id = @VehicleId) AS VehicleStatus",
-                new { CustomerId = invoice.Customer_Id, SalespersonId = invoice.Salesperson_Id, VehicleId = invoice.Vehicle_Id });
+                         (SELECT LOWER(status) FROM vehicle WHERE id = @VehicleId) AS VehicleStatus,
+                         (SELECT selling_price FROM vehicle WHERE id = @VehicleId) AS SellingPrice",
+                new { CustomerId = invoice.Customer_Id, SalespersonId = invoice.Salesperson_Id, VehicleId = invoice.Vehicle_Id },
+                transaction);
 
             if (selection.CustomerStatus is null)
                 throw new ArgumentException("Customer does not exist.");
@@ -51,6 +53,19 @@ namespace NPMotors.Repository.Repositories
                 throw new ArgumentException("Vehicle does not exist.");
             if (selection.VehicleStatus != VehicleStatus.Available.ToDbValue())
                 throw new ArgumentException("Only available vehicles can be selected.");
+            if (selection.SellingPrice is null || selection.SellingPrice < 0)
+                throw new ArgumentException("The vehicle has no selling price.");
+            if (invoice.Discount > selection.SellingPrice)
+                throw new ArgumentException("Discount cannot exceed the sale price.");
+            if (selection.SellingPrice + invoice.Tax + invoice.Fees - invoice.Discount <= 0)
+                throw new ArgumentException("Invoice total must be greater than zero.");
+        }
+
+        public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            await ValidateSelectionAsync(connection, invoice);
 
             var queryParams = new DynamicParameters();
             queryParams.Add("CustomerId", invoice.Customer_Id);
@@ -58,8 +73,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("VehicleId", invoice.Vehicle_Id);
             queryParams.Add("InvoiceDate", invoice.Invoice_Date.Date, DbType.Date);
             queryParams.Add("DueDate", invoice.Due_Date?.Date, DbType.Date);
-            queryParams.Add("SalePrice", invoice.Sale_Price);
-            queryParams.Add("Tax", invoice.Tax);
+                        queryParams.Add("Tax", invoice.Tax);
             queryParams.Add("Fees", invoice.Fees);
             queryParams.Add("Discount", invoice.Discount);
             queryParams.Add("ActiveStatus", Status.Active.ToDbValue());
@@ -74,9 +88,9 @@ namespace NPMotors.Repository.Repositories
                        ins AS (
                            INSERT INTO sales_invoice (id, number, date, customer_id, salesperson_id, vehicle_id, sale_price,
                                                       tax, fees, discount, total, paid, balance, due_date, lifecycle)
-                           SELECT n.id, 'INV-' || LPAD(n.id::text, 6, '0'), @InvoiceDate, c.id, e.id, v.id, @SalePrice,
-                                  @Tax, @Fees, @Discount, @SalePrice + @Tax + @Fees - @Discount, 0,
-                                  @SalePrice + @Tax + @Fees - @Discount, @DueDate, @Lifecycle
+                           SELECT n.id, 'INV-' || LPAD(n.id::text, 6, '0'), @InvoiceDate, c.id, e.id, v.id, v.selling_price,
+                                  @Tax, @Fees, @Discount, v.selling_price + @Tax + @Fees - @Discount, 0,
+                                  v.selling_price + @Tax + @Fees - @Discount, @DueDate, @Lifecycle
                            FROM new_id n, customer c, employee e, vehicle v
                            WHERE c.id = @CustomerId AND LOWER(c.status) = @ActiveStatus
                              AND e.id = @SalespersonId AND LOWER(e.status) = @ActiveStatus AND COALESCE(e.commission, 0) > 0
@@ -93,6 +107,85 @@ namespace NPMotors.Repository.Repositories
                 queryParams);
 
             return created ?? throw new ArgumentException("The invoice could not be created because the customer, salesperson or vehicle is no longer eligible.");
+        }
+
+        public async Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction transaction = connection.BeginTransaction();
+
+            await ValidateSelectionAsync(connection, invoice, transaction);
+
+            var queryParams = new DynamicParameters();
+            queryParams.Add("CustomerId", invoice.Customer_Id);
+            queryParams.Add("SalespersonId", invoice.Salesperson_Id);
+            queryParams.Add("VehicleId", invoice.Vehicle_Id);
+            queryParams.Add("InvoiceDate", invoice.Invoice_Date.Date, DbType.Date);
+            queryParams.Add("DueDate", invoice.Due_Date?.Date, DbType.Date);
+                        queryParams.Add("Tax", invoice.Tax);
+            queryParams.Add("Fees", invoice.Fees);
+            queryParams.Add("Discount", invoice.Discount);
+            queryParams.Add("ActiveStatus", Status.Active.ToDbValue());
+            queryParams.Add("VehicleStatus", VehicleStatus.Available.ToDbValue());
+            queryParams.Add("Lifecycle", InvoiceLifecycle.Posted.ToDbValue());
+            queryParams.Add("PaymentStatus", PaymentStatus.Unpaid.ToDbValue());
+
+            // Validate again and insert in one statement; the vehicle row is locked so a concurrent post waits.
+            // A Posted invoice starts Unpaid with paid = 0 and balance = total.
+            SalesInvoiceResponseDto? created;
+            try
+            {
+                created = await connection.QuerySingleOrDefaultAsync<SalesInvoiceResponseDto>(
+                    @"WITH new_id AS (SELECT nextval(pg_get_serial_sequence('sales_invoice', 'id')) AS id),
+                           ins AS (
+                               INSERT INTO sales_invoice (id, number, date, customer_id, salesperson_id, vehicle_id, sale_price,
+                                                          tax, fees, discount, total, paid, balance, due_date, lifecycle, payment_status)
+                               SELECT n.id, 'INV-' || LPAD(n.id::text, 6, '0'), @InvoiceDate, c.id, e.id, v.id, v.selling_price,
+                                      @Tax, @Fees, @Discount, v.selling_price + @Tax + @Fees - @Discount, 0,
+                                      v.selling_price + @Tax + @Fees - @Discount, @DueDate, @Lifecycle, @PaymentStatus
+                               FROM new_id n, customer c, employee e, vehicle v
+                               WHERE c.id = @CustomerId AND LOWER(c.status) = @ActiveStatus
+                                 AND e.id = @SalespersonId AND LOWER(e.status) = @ActiveStatus AND COALESCE(e.commission, 0) > 0
+                                 AND v.id = @VehicleId AND LOWER(v.status) = @VehicleStatus
+                               RETURNING id, number, date, due_date, customer_id, salesperson_id, vehicle_id, sale_price,
+                                         tax, fees, discount, paid, lifecycle, payment_status
+                           )
+                       SELECT ins.id, ins.number, ins.date AS Invoice_Date, ins.due_date AS Due_Date,
+                              ins.customer_id AS Customer_Id, ins.salesperson_id AS Salesperson_Id, ins.vehicle_id AS Vehicle_Id,
+                              v.vin, v.make, v.model, COALESCE(v.selling_price, 0) AS Selling_Price,
+                              COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost, ins.sale_price AS Sale_Price,
+                              ins.tax, ins.fees, ins.discount, ins.paid, ins.lifecycle AS Lifecycle, ins.payment_status AS Payment_Status
+                       FROM ins JOIN vehicle v ON v.id = ins.vehicle_id",
+                    queryParams, transaction);
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                transaction.Rollback();
+                throw new ArgumentException("This vehicle already has a sales invoice.");
+            }
+
+            if (created is null)
+            {
+                transaction.Rollback();
+                throw new ArgumentException("The invoice could not be posted because the customer, salesperson or vehicle is not eligible.");
+            }
+
+            // Mark the vehicle Sold and link it to the invoice; 0 rows means it was sold in the meantime.
+            var vehicleRows = await connection.ExecuteAsync(
+                @"UPDATE vehicle SET status = @Sold, invoice_id = @Id
+                  WHERE id = @VehicleId AND LOWER(status) = @Available",
+                new { Id = created.Id, VehicleId = invoice.Vehicle_Id, Sold = VehicleStatus.Sold.ToDbValue(), Available = VehicleStatus.Available.ToDbValue() },
+                transaction);
+            if (vehicleRows == 0)
+            {
+                transaction.Rollback();
+                throw new ArgumentException("The vehicle is no longer available (already sold).");
+            }
+
+            transaction.Commit();
+            return created;
         }
 
         private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)

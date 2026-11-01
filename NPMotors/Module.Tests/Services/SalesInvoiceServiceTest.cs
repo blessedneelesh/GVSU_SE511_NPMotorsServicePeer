@@ -11,7 +11,17 @@ namespace Module.Tests.Services
         private class FakeSalesInvoiceRepository : ISalesInvoiceRepository
         {
             public SalesInvoiceResponseDto? Result { get; set; }
+            // Stands in for vehicle.selling_price, which the real repository uses as the sale price.
+            public decimal SellingPrice { get; set; } = 20000m;
             public List<SalesInvoiceCreateDto> AddCalls { get; } = new();
+
+            public List<SalesInvoiceCreateDto> PostCalls { get; } = new();
+
+            public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
+            {
+                PostCalls.Add(invoice);
+                return Task.FromResult(Result ?? new SalesInvoiceResponseDto { Id = 1 });
+            }
 
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
             {
@@ -27,7 +37,7 @@ namespace Module.Tests.Services
                     Customer_Id = invoice.Customer_Id,
                     Salesperson_Id = invoice.Salesperson_Id,
                     Vehicle_Id = invoice.Vehicle_Id,
-                    Sale_Price = invoice.Sale_Price,
+                    Sale_Price = SellingPrice,
                     Tax = invoice.Tax,
                     Fees = invoice.Fees,
                     Discount = invoice.Discount,
@@ -45,19 +55,22 @@ namespace Module.Tests.Services
             _service = new SalesInvoiceService(_repository);
         }
 
-        private static SalesInvoiceCreateDto NewInvoice(
-            decimal salePrice = 20000m, decimal tax = 0m, decimal fees = 0m, decimal discount = 0m) => new()
+        private SalesInvoiceCreateDto NewInvoice(
+            decimal salePrice = 20000m, decimal tax = 0m, decimal fees = 0m, decimal discount = 0m)
         {
-            Customer_Id = 1,
-            Salesperson_Id = 2,
-            Vehicle_Id = 3,
-            Invoice_Date = new DateTime(2026, 5, 1),
-            Due_Date = new DateTime(2026, 5, 31),
-            Sale_Price = salePrice,
-            Tax = tax,
-            Fees = fees,
-            Discount = discount
-        };
+            _repository.SellingPrice = salePrice;
+            return new SalesInvoiceCreateDto
+            {
+                Customer_Id = 1,
+                Salesperson_Id = 2,
+                Vehicle_Id = 3,
+                Invoice_Date = new DateTime(2026, 5, 1),
+                Due_Date = new DateTime(2026, 5, 31),
+                Tax = tax,
+                Fees = fees,
+                Discount = discount
+            };
+        }
 
         private async Task AssertRejectedAsync(SalesInvoiceCreateDto invoice, string expectedMessage)
         {
@@ -150,58 +163,6 @@ namespace Module.Tests.Services
         }
 
         // ---- ValidateInvoice via AddSalesInvoice ----
-
-        [Fact]
-        public async Task AddSalesInvoice_DiscountExceedsSalePrice_Throws()
-        {
-            await AssertRejectedAsync(NewInvoice(1000m, tax: 500m, discount: 1000.01m),
-                "Discount cannot exceed the sale price.");
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_DiscountEqualsSalePriceWithFees_IsAllowed()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(1000m, fees: 50m, discount: 1000m));
-
-            Assert.Equal(50m, result.Total);
-            Assert.Single(_repository.AddCalls);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_DiscountBelowSalePrice_IsAllowed()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(1000m, discount: 999.99m));
-
-            Assert.Equal(0.01m, result.Total);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_TotalIsZero_Throws()
-        {
-            await AssertRejectedAsync(NewInvoice(1000m, discount: 1000m),
-                "Invoice total must be greater than zero.");
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_SalePriceZero_Throws()
-        {
-            await AssertRejectedAsync(NewInvoice(0m),
-                "Invoice total must be greater than zero.");
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_SalePriceZeroWithTaxAndFees_PositiveTotal_IsAllowed()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(0m, tax: 100m, fees: 50m));
-
-            Assert.Equal(150m, result.Total);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_NegativeSalePrice_Throws()
-        {
-            await AssertRejectedAsync(NewInvoice(-1m), "Sale price cannot be negative.");
-        }
 
         [Fact]
         public async Task AddSalesInvoice_NegativeTax_Throws()
