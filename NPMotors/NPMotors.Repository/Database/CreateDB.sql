@@ -162,6 +162,9 @@ ALTER TABLE sales_invoice
     ADD CONSTRAINT fk_sales_invoice_vehicle
         FOREIGN KEY (vehicle_id) REFERENCES vehicle (id);
 
+ALTER TABLE sales_invoice
+    ADD CONSTRAINT uq_sales_invoice_number UNIQUE (number);
+
 -- Later changes/ addition of lifecycle_status
 ALTER TABLE sales_invoice
   RENAME COLUMN status TO payment_status; 

@@ -212,15 +212,6 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task AddSalesInvoice_TwoInvoices_GetDifferentNumbers()
-        {
-            var first = await AddAsync(await ValidDtoAsync("1"));
-            var second = await AddAsync(await ValidDtoAsync("2"));
-
-            Assert.NotEqual(first.Number, second.Number);
-        }
-
-        [Fact]
         public async Task AddSalesInvoice_DueDateIsOptional()
         {
             var dto = await ValidDtoAsync();

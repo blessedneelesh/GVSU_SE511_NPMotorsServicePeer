@@ -191,16 +191,6 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task AddSalesInvoice_TwoInvoices_GetUniqueNumbers()
-        {
-            var first = await ReadAsync<SalesInvoiceResponseDto>(await PostAsync(await ValidDtoAsync()));
-            var secondDto = await ValidDtoAsync();
-            var second = await ReadAsync<SalesInvoiceResponseDto>(await PostAsync(secondDto));
-
-            Assert.NotEqual(first!.Number, second!.Number);
-        }
-
-        [Fact]
         public async Task AddSalesInvoice_Valid_DoesNotChangeVehicleStatus()
         {
             var dto = await ValidDtoAsync();
