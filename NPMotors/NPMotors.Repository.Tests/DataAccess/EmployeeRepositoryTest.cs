@@ -1,4 +1,5 @@
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
 using NPMotors.Repository.RequestFeatures;
 
@@ -28,7 +29,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         // Reuses an existing test row (matched by this test run's marker) if present, otherwise inserts one.
         private async Task<EmployeeResponseDto> InsertTestEmployeeAsync(
-            string suffix = "a", string status = "active", string? department = null, decimal? commission = null)
+            string suffix = "a", Status status = Status.Active, string? department = null, decimal? commission = null)
         {
             var firstName = $"Test{suffix}";
 
@@ -92,14 +93,14 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetAllEmployees_FiltersByStatus()
         {
             // Arrange
-            var active = await InsertTestEmployeeAsync("active", "active");
-            var inactive = await InsertTestEmployeeAsync("inactive", "inactive");
+            var active = await InsertTestEmployeeAsync("active", Status.Active);
+            var inactive = await InsertTestEmployeeAsync("inactive", Status.Inactive);
 
             // Act
             var inactiveResult = await _repository.GetAllEmployees(
-                new EmployeeParameters { SearchTerm = _marker, Status = "inactive" });
+                new EmployeeParameters { SearchTerm = _marker, Status = Status.Inactive });
             var activeResult = await _repository.GetAllEmployees(
-                new EmployeeParameters { SearchTerm = _marker, Status = "ACTIVE" });
+                new EmployeeParameters { SearchTerm = _marker, Status = Status.Active });
 
             // Assert
             Assert.Single(inactiveResult);
@@ -186,9 +187,9 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetActiveSalespeople_ReturnsOnlyActiveEmployeesWithCommission()
         {
             // Arrange
-            var activeSeller = await InsertTestEmployeeAsync("activeseller", "active", commission: 5m);
-            var inactiveSeller = await InsertTestEmployeeAsync("inactiveseller", "inactive", commission: 5m);
-            var activeNonSeller = await InsertTestEmployeeAsync("nonseller", "active", commission: 0m);
+            var activeSeller = await InsertTestEmployeeAsync("activeseller", Status.Active, commission: 5m);
+            var inactiveSeller = await InsertTestEmployeeAsync("inactiveseller", Status.Inactive, commission: 5m);
+            var activeNonSeller = await InsertTestEmployeeAsync("nonseller", Status.Active, commission: 0m);
 
             // Act
             var result = (await _repository.GetActiveSalespeople())
@@ -214,7 +215,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Salary = 62000.50m,
                 Bonus = 2500m,
                 Commission_Rate = 7.5m,
-                Status = "INACTIVE"
+                Status = Status.Inactive
             };
 
             // Act
@@ -232,7 +233,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(2500m, reloaded.Bonus);
             Assert.Equal(7.5m, reloaded.Commission_Rate);
             Assert.True(reloaded.Is_Salesperson);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
         }
 
         [Fact]
@@ -275,7 +276,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Salary = 80000m,
                 Bonus = 5000m,
                 Commission_Rate = 10m,
-                Status = "inactive"
+                Status = Status.Inactive
             };
 
             // Act
@@ -292,7 +293,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(80000m, reloaded.Salary);
             Assert.Equal(5000m, reloaded.Bonus);
             Assert.Equal(10m, reloaded.Commission_Rate);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
         }
 
         [Fact]
@@ -303,7 +304,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             {
                 First_Name = "Ghost",
                 Last_Name = _marker,
-                Status = "active"
+                Status = Status.Active
             };
 
             // Act

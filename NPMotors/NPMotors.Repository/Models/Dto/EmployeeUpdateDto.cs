@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using NPMotors.Repository.Models.Enums;
 
 namespace NPMotors.Repository.Models.Dto
 {
@@ -21,7 +22,6 @@ namespace NPMotors.Repository.Models.Dto
         public decimal? Bonus { get; set; }
         [Range(typeof(decimal), "0", "100", ErrorMessage = "Commission rate must be between 0 and 100.")]
         public decimal? Commission_Rate { get; set; }
-        [RegularExpression("(?i)^(active|inactive)$", ErrorMessage = "Status must be 'active' or 'inactive'.")]
-        public string Status { get; set; } = "active";
+        public Status Status { get; set; } = Status.Active;
     }
 }

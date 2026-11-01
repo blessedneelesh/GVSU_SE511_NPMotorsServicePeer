@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Newtonsoft.Json;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
 
 namespace Module.Tests.Controllers
@@ -44,7 +45,7 @@ namespace Module.Tests.Controllers
             City = "Allendale",
             State = "MI",
             Zip = "49401",
-            Status = "active"
+            Status = Status.Active
         };
 
         private async Task<CustomerResponseDto> CreateCustomerAsync(string suffix = "a")
@@ -166,7 +167,7 @@ namespace Module.Tests.Controllers
                 City = "Holland",
                 State = "OH",
                 Zip = "43001",
-                Status = "inactive"
+                Status = Status.Inactive
             };
 
             // Act
@@ -179,7 +180,7 @@ namespace Module.Tests.Controllers
             Assert.Equal("Updated", reloaded!.First_Name);
             Assert.Equal(update.Email, reloaded.Email);
             Assert.Equal("Holland", reloaded.City);
-            Assert.Equal("inactive", reloaded.Status);
+            Assert.Equal(Status.Inactive, reloaded.Status);
         }
 
         [Fact]
@@ -191,7 +192,7 @@ namespace Module.Tests.Controllers
                 First_Name = "Ghost",
                 Last_Name = _marker,
                 Email = $"{_marker}-ghost@example.com",
-                Status = "active"
+                Status = Status.Active
             };
 
             // Act

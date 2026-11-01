@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using NPMotors.Repository.Interface;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Services.Service
@@ -11,8 +12,6 @@ namespace NPMotors.Services.Service
     public class VendorService : IVendorService
     {
         private readonly IVendorRepository _vendorRepository;
-
-        private static readonly string[] AllowedTypes = { "Vehicle", "Parts", "Service" };
 
         public VendorService(IVendorRepository vendorRepository)
         {
@@ -29,23 +28,21 @@ namespace NPMotors.Services.Service
             return _vendorRepository.GetVendorById(id);
         }
 
-        public Task<IEnumerable<VendorResponseDto>> GetActiveVendors(string? type = null)
+        public Task<IEnumerable<VendorResponseDto>> GetActiveVendors(VendorType? type = null)
         {
             return _vendorRepository.GetActiveVendors(type);
         }
 
         public Task<VendorResponseDto> AddVendor(VendorCreateDto vendor)
         {
-            vendor.Type = NormalizeType(vendor.Type);
-            vendor.Status = NormalizeStatus(vendor.Status);
+            ValidateType(vendor.Type);
             Validate(vendor.Name);
             return _vendorRepository.AddVendor(vendor);
         }
 
         public Task<VendorResponseDto?> UpdateVendor(long id, VendorUpdateDto vendor)
         {
-            vendor.Type = NormalizeType(vendor.Type);
-            vendor.Status = NormalizeStatus(vendor.Status);
+            ValidateType(vendor.Type);
             Validate(vendor.Name);
             return _vendorRepository.UpdateVendor(id, vendor);
         }
@@ -68,18 +65,10 @@ namespace NPMotors.Services.Service
                 throw new ArgumentException("Vendor name is required.");
         }
 
-        private static string NormalizeType(string? type)
+        private static void ValidateType(VendorType type)
         {
-            var match = AllowedTypes.FirstOrDefault(t => t.Equals(type?.Trim(), StringComparison.OrdinalIgnoreCase));
-            return match ?? throw new ArgumentException("Type must be 'Vehicle', 'Parts' or 'Service'.");
-        }
-
-        private static string NormalizeStatus(string? status)
-        {
-            var value = (status ?? "active").Trim().ToLowerInvariant();
-            if (value != "active" && value != "inactive")
-                throw new ArgumentException("Status must be 'active' or 'inactive'.");
-            return value;
+            if (!Enum.IsDefined(type))
+                throw new ArgumentException("Type must be 'Vehicle', 'Parts' or 'Service'.");
         }
     }
 }

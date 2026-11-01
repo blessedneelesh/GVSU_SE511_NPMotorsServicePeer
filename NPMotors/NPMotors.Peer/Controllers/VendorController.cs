@@ -1,4 +1,5 @@
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Abstractions.ServiceInterfaces;
 using Microsoft.AspNetCore.Mvc;
@@ -31,7 +32,7 @@ namespace NPMotors.Peer.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetActiveVendors([FromQuery] string? type)
+        public async Task<IActionResult> GetActiveVendors([FromQuery] VendorType? type)
         {
             var vendors = await _vendorService.GetActiveVendors(type);
             return Ok(vendors);
