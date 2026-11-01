@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using NPMotors.Repository.Interface;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Services.Service
 {
@@ -34,6 +35,42 @@ namespace NPMotors.Services.Service
             posted.Total = CalculateTotal(posted.Sale_Price, posted.Tax, posted.Fees, posted.Discount);
             posted.Balance = CalculateBalance(posted.Total, posted.Paid);
             return posted;
+        }
+
+        public async Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters)
+        {
+            var invoices = await _salesInvoiceRepository.GetAllSalesInvoices(parameters);
+            foreach (var invoice in invoices)
+            {
+                invoice.Total = CalculateTotal(invoice.Sale_Price, invoice.Tax, invoice.Fees, invoice.Discount);
+                invoice.Balance = CalculateBalance(invoice.Total, invoice.Paid);
+            }
+            return invoices;
+        }
+
+        public async Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id)
+        {
+            var invoice = await _salesInvoiceRepository.GetSalesInvoiceById(id);
+            if (invoice is null)
+                return null;
+
+            invoice.Total = CalculateTotal(invoice.Sale_Price, invoice.Tax, invoice.Fees, invoice.Discount);
+            invoice.Balance = CalculateBalance(invoice.Total, invoice.Paid);
+            return invoice;
+        }
+
+        public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+        {
+            var text = reason?.Reason?.Trim();
+            if (string.IsNullOrEmpty(text))
+                throw new ArgumentException("A cancellation reason is required.");
+            if (text.Length > 500)
+                throw new ArgumentException("The cancellation reason cannot exceed 500 characters.");
+
+            var cancelled = await _salesInvoiceRepository.CancelSalesInvoice(id, new SalesInvoiceCancelDto { Reason = text });
+            cancelled.Total = CalculateTotal(cancelled.Sale_Price, cancelled.Tax, cancelled.Fees, cancelled.Discount);
+            cancelled.Balance = CalculateBalance(cancelled.Total, cancelled.Paid);
+            return cancelled;
         }
 
         private static decimal CalculateTotal(decimal salePrice, decimal tax, decimal fees, decimal discount)

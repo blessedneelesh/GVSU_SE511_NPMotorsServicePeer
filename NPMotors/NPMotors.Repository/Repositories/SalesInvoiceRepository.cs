@@ -8,6 +8,8 @@ using NPMotors.Repository.Models.Enums;
 using System.Threading.Tasks;
 using Dapper;
 using Npgsql;
+using System.Linq;
+using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Repository.Repositories
 {
@@ -186,6 +188,143 @@ namespace NPMotors.Repository.Repositories
 
             transaction.Commit();
             return created;
+        }
+
+        // Stored columns only; Total and Balance are filled by SalesInvoiceService.
+        private const string BrowseColumns =
+            @"si.id, si.number, si.date AS Invoice_Date, si.due_date AS Due_Date,
+              si.customer_id AS Customer_Id, CONCAT_WS(' ', c.first_name, c.last_name) AS Customer_Name,
+              si.salesperson_id AS Salesperson_Id, si.vehicle_id AS Vehicle_Id,
+              v.vin, v.make, v.model, v.status AS Vehicle_Status,
+              COALESCE(v.selling_price, 0) AS Selling_Price, COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost,
+              COALESCE(si.sale_price, 0) AS Sale_Price, si.tax, si.fees, si.discount, si.paid,
+              si.lifecycle AS Lifecycle, si.payment_status AS Payment_Status, si.cancel_reason AS Cancel_Reason";
+
+        private const string BrowseFrom =
+            "FROM sales_invoice si JOIN customer c ON c.id = si.customer_id JOIN vehicle v ON v.id = si.vehicle_id";
+
+        // Cancelled invoices are included unless the Lifecycle filter says otherwise.
+        public async Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            var whereClauses = new List<string>();
+            var queryParams = new DynamicParameters();
+
+            var lifecycle = parameters.Lifecycle?.Trim();
+            if (!string.IsNullOrWhiteSpace(lifecycle))
+            {
+                whereClauses.Add("LOWER(si.lifecycle) = @Lifecycle");
+                queryParams.Add("Lifecycle", lifecycle.ToLowerInvariant());
+            }
+
+            var status = parameters.Status?.Trim();
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                whereClauses.Add("LOWER(si.payment_status) = @Status");
+                queryParams.Add("Status", status.ToLowerInvariant());
+            }
+
+            var searchTerm = parameters.SearchTerm?.Trim();
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                whereClauses.Add(@"(
+                    LOWER(si.number) LIKE @SearchTerm OR
+                    LOWER(CONCAT_WS(' ', c.first_name, c.last_name)) LIKE @SearchTerm OR
+                    LOWER(v.vin) LIKE @SearchTerm
+                )");
+                queryParams.Add("SearchTerm", $"%{searchTerm.ToLowerInvariant()}%");
+            }
+
+            if (parameters.FromDate is not null)
+            {
+                whereClauses.Add("si.date >= @FromDate");
+                queryParams.Add("FromDate", parameters.FromDate.Value.Date, DbType.Date);
+            }
+
+            if (parameters.ToDate is not null)
+            {
+                whereClauses.Add("si.date <= @ToDate");
+                queryParams.Add("ToDate", parameters.ToDate.Value.Date, DbType.Date);
+            }
+
+            var whereSql = whereClauses.Count > 0
+                ? " WHERE " + string.Join(" AND ", whereClauses)
+                : string.Empty;
+
+            var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {BrowseFrom}{whereSql}", queryParams);
+
+            queryParams.Add("Offset", (parameters.PageNumber - 1) * parameters.PageSize);
+            queryParams.Add("Limit", parameters.PageSize);
+
+            var invoices = (await connection.QueryAsync<SalesInvoiceResponseDto>(
+                $"SELECT {BrowseColumns} {BrowseFrom}{whereSql} ORDER BY si.date DESC, si.id DESC OFFSET @Offset LIMIT @Limit",
+                queryParams)).ToList();
+
+            return new PagedList<SalesInvoiceResponseDto>(invoices, count, parameters.PageNumber, parameters.PageSize);
+        }
+
+        public async Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<SalesInvoiceResponseDto>(
+                $"SELECT {BrowseColumns} {BrowseFrom} WHERE si.id = @Id",
+                new { Id = id });
+        }
+
+        private sealed class CancelState
+        {
+            public string? Lifecycle { get; set; }
+            public decimal Paid { get; set; }
+        }
+
+        // One transaction: lock and check the invoice, mark it Cancelled with the reason, return the vehicle to inventory.
+        // A missing invoice throws KeyNotFoundException (404); a rule violation throws ArgumentException (400).
+        public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction transaction = connection.BeginTransaction();
+
+            var current = await connection.QuerySingleOrDefaultAsync<CancelState>(
+                "SELECT LOWER(lifecycle) AS Lifecycle, paid AS Paid FROM sales_invoice WHERE id = @Id FOR UPDATE",
+                new { Id = id }, transaction);
+
+            if (current is null)
+            {
+                transaction.Rollback();
+                throw new KeyNotFoundException("The invoice does not exist.");
+            }
+            if (current.Lifecycle != InvoiceLifecycle.Posted.ToDbValue())
+            {
+                transaction.Rollback();
+                throw new ArgumentException("Only Posted invoices can be cancelled.");
+            }
+            if (current.Paid != 0)
+            {
+                transaction.Rollback();
+                throw new ArgumentException("An invoice with payments cannot be cancelled.");
+            }
+
+            // The invoice keeps its vehicle_id as history; only the vehicle is released (matched through invoice_id).
+            await connection.ExecuteAsync(
+                "UPDATE vehicle SET status = @Available, invoice_id = NULL WHERE invoice_id = @Id",
+                new { Id = id, Available = VehicleStatus.Available.ToDbValue() },
+                transaction);
+
+            await connection.ExecuteAsync(
+                "UPDATE sales_invoice SET lifecycle = @Cancelled, cancel_reason = @Reason WHERE id = @Id",
+                new { Id = id, Cancelled = InvoiceLifecycle.Cancelled.ToDbValue(), Reason = reason.Reason },
+                transaction);
+
+            var cancelled = await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
+                $"SELECT {BrowseColumns} {BrowseFrom} WHERE si.id = @Id",
+                new { Id = id }, transaction);
+
+            transaction.Commit();
+            return cancelled;
         }
 
         private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)

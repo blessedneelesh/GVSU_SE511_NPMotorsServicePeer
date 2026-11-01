@@ -12,11 +12,13 @@ namespace NPMotors.Repository.Models.Dto
         public DateTime Invoice_Date { get; set; }
         public DateTime? Due_Date { get; set; }
         public long Customer_Id { get; set; }
+        public string Customer_Name { get; set; } = string.Empty;
         public long Salesperson_Id { get; set; }
         public long Vehicle_Id { get; set; }
         public string Vin { get; set; } = string.Empty;
         public string? Make { get; set; }
         public string? Model { get; set; }
+        public string Vehicle_Status { get; set; } = string.Empty;
         public decimal Selling_Price { get; set; }
         // Inventory cost: vehicle.total_cost (Story 4).
         public decimal Vehicle_Total_Cost { get; set; }
@@ -32,5 +34,7 @@ namespace NPMotors.Repository.Models.Dto
         public InvoiceLifecycle Lifecycle { get; set; }
         // Null until the invoice is Posted (Paid / Partial / Unpaid / Overdue).
         public PaymentStatus? Payment_Status { get; set; }
+        // Set when the invoice is Cancelled (Story 9).
+        public string? Cancel_Reason { get; set; }
     }
 }
