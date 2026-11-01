@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using Newtonsoft.Json;
 using NPMotors.Repository.Models.Dto;
@@ -42,7 +42,7 @@ namespace Module.Tests.Controllers
             Phone = "5550100",
             Email = $"{_marker}-{suffix}@example.com",
             Address = "1 Test St",
-            Type = "Parts",
+            Type = VendorType.Parts,
             Status = Status.Active
         };
 
@@ -86,7 +86,7 @@ namespace Module.Tests.Controllers
             var activeParts = await CreateVendorAsync("activeparts");
             var inactiveVehicle = await CreateVendorAsync("inactivevehicle", d =>
             {
-                d.Type = "Vehicle";
+                d.Type = VendorType.Vehicles;
                 d.Status = Status.Inactive;
             });
 
@@ -154,10 +154,13 @@ namespace Module.Tests.Controllers
         {
             // Arrange
             var dto = NewVendorDto("post");
-            dto.Type = "vehicle";
+            dto.Type = VendorType.Vehicles;
+            var payload = JsonConvert.DeserializeObject<Dictionary<string, object?>>(
+                JsonConvert.SerializeObject(dto))!;
+            payload["type"] = "vehicles"; // input is case-insensitive
 
             // Act
-            var response = await _testClient.PostAsync("Vendor/AddVendor", Json(dto));
+            var response = await _testClient.PostAsync("Vendor/AddVendor", Json(payload));
             var body = await ReadAsync<VendorResponseDto>(response);
             if (body != null && body.Id > 0)
                 _createdIds.Add(body.Id);
@@ -169,7 +172,7 @@ namespace Module.Tests.Controllers
             var reloaded = await _repo.GetVendorById(body.Id);
             Assert.NotNull(reloaded);
             Assert.Equal(dto.Name, reloaded!.Name);
-            Assert.Equal("Vehicle", reloaded.Type);
+            Assert.Equal(VendorType.Vehicles, reloaded.Type);
             Assert.Equal(0m, reloaded.Balance);
             Assert.Equal(0m, reloaded.TotalPurchases);
         }
@@ -223,8 +226,9 @@ namespace Module.Tests.Controllers
         public async Task AddVendor_Returns400_WhenTypeIsInvalid()
         {
             // Arrange
-            var invalid = NewVendorDto("badtype");
-            invalid.Type = "Hardware";
+            var invalid = JsonConvert.DeserializeObject<Dictionary<string, object?>>(
+                JsonConvert.SerializeObject(NewVendorDto("badtype")))!;
+            invalid["type"] = "Hardware";
 
             // Act
             var response = await _testClient.PostAsync("Vendor/AddVendor", Json(invalid));
@@ -260,19 +264,22 @@ namespace Module.Tests.Controllers
                 Phone = "5550199",
                 Email = $"{_marker}-updated@example.com",
                 Address = "99 Updated Ave",
-                Type = "service",
+                Type = VendorType.Service,
                 Status = Status.Inactive
             };
+            var payload = JsonConvert.DeserializeObject<Dictionary<string, object?>>(
+                JsonConvert.SerializeObject(update))!;
+            payload["type"] = "service"; // input is case-insensitive
 
             // Act
-            var response = await _testClient.PutAsync($"Vendor/UpdateVendor?id={created.Id}", Json(update));
+            var response = await _testClient.PutAsync($"Vendor/UpdateVendor?id={created.Id}", Json(payload));
 
             // Assert
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var reloaded = await _repo.GetVendorById(created.Id);
             Assert.NotNull(reloaded);
             Assert.Equal(update.Name, reloaded!.Name);
-            Assert.Equal("Service", reloaded.Type);
+            Assert.Equal(VendorType.Service, reloaded.Type);
             Assert.Equal(Status.Inactive, reloaded.Status);
             Assert.Equal(0m, reloaded.Balance);
         }
@@ -282,7 +289,12 @@ namespace Module.Tests.Controllers
         {
             // Arrange
             var created = await CreateVendorAsync();
-            var update = new VendorUpdateDto { Name = created.Name, Type = "Hardware", Status = Status.Active };
+            var update = new Dictionary<string, object?>
+            {
+                ["name"] = created.Name,
+                ["type"] = "Hardware",
+                ["status"] = "active"
+            };
 
             // Act
             var response = await _testClient.PutAsync($"Vendor/UpdateVendor?id={created.Id}", Json(update));
@@ -295,7 +307,7 @@ namespace Module.Tests.Controllers
         public async Task UpdateVendor_Returns404_WhenNotFound()
         {
             // Arrange
-            var update = new VendorUpdateDto { Name = $"{_marker} Ghost", Type = "Parts", Status = Status.Active };
+            var update = new VendorUpdateDto { Name = $"{_marker} Ghost", Type = VendorType.Parts, Status = Status.Active };
 
             // Act
             var response = await _testClient.PutAsync("Vendor/UpdateVendor?id=-1", Json(update));

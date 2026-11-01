@@ -17,6 +17,7 @@ namespace NPMotors.Repository
             services.AddScoped<IEmployeeRepository, EmployeeRepository>();
             services.AddScoped<IVendorRepository, VendorRepository>();
             services.AddScoped<IBankAccountRepository, BankAccountRepository>();
+            services.AddScoped<IVehicleRepository, VehicleRepository>();
 
             return services;
         }

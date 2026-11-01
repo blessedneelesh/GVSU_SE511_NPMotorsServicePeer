@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
@@ -30,7 +30,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         // Reuses an existing test row (matched by this test run's marker) if present, otherwise inserts one.
         private async Task<VendorResponseDto> InsertTestVendorAsync(
-            string suffix = "a", Status status = Status.Active, string type = "Parts")
+            string suffix = "a", Status status = Status.Active, VendorType type = VendorType.Parts)
         {
             var email = $"{_marker}-{suffix}@example.com";
 
@@ -72,7 +72,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             var found = result.FirstOrDefault(v => v.Id == inserted.Id);
             Assert.NotNull(found);
             Assert.Equal(_insertedVendor!.Email, found!.Email);
-            Assert.Equal("Parts", found.Type);
+            Assert.Equal(VendorType.Parts, found.Type);
             Assert.Equal(1, result.MetaData.TotalCount);
         }
 
@@ -113,12 +113,12 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetAllVendors_FiltersByType()
         {
             // Arrange
-            var parts = await InsertTestVendorAsync("parts", type: "Parts");
-            await InsertTestVendorAsync("vehicle", type: "Vehicle");
+            var parts = await InsertTestVendorAsync("parts", type: VendorType.Parts);
+            await InsertTestVendorAsync("vehicle", type: VendorType.Vehicles);
 
             // Act
             var result = await _repository.GetAllVendors(
-                new VendorParameters { SearchTerm = _marker, Type = "PARTS" });
+                new VendorParameters { SearchTerm = _marker, Type = VendorType.Parts });
 
             // Assert
             Assert.Single(result);
@@ -165,14 +165,14 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetActiveVendors_ExcludesInactiveAndFiltersByType()
         {
             // Arrange
-            var activeParts = await InsertTestVendorAsync("activeparts", Status.Active, "Parts");
-            var inactiveParts = await InsertTestVendorAsync("inactiveparts", Status.Inactive, "Parts");
-            var activeVehicle = await InsertTestVendorAsync("activevehicle", Status.Active, "Vehicle");
+            var activeParts = await InsertTestVendorAsync("activeparts", Status.Active, VendorType.Parts);
+            var inactiveParts = await InsertTestVendorAsync("inactiveparts", Status.Inactive, VendorType.Parts);
+            var activeVehicle = await InsertTestVendorAsync("activevehicle", Status.Active, VendorType.Vehicles);
 
             // Act
             var all = (await _repository.GetActiveVendors())
                 .Where(v => v.Name.StartsWith(_marker)).ToList();
-            var partsOnly = (await _repository.GetActiveVendors("parts"))
+            var partsOnly = (await _repository.GetActiveVendors(VendorType.Parts))
                 .Where(v => v.Name.StartsWith(_marker)).ToList();
 
             // Assert
@@ -194,7 +194,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Phone = "5550101",
                 Email = $"{_marker}-create@example.com",
                 Address = "2 Test St",
-                Type = "Vehicle",
+                Type = VendorType.Vehicles,
                 Status = Status.Inactive
             };
 
@@ -208,7 +208,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.NotNull(reloaded);
             Assert.Equal(dto.Name, reloaded!.Name);
             Assert.Equal(dto.Email, reloaded.Email);
-            Assert.Equal("Vehicle", reloaded.Type);
+            Assert.Equal(VendorType.Vehicles, reloaded.Type);
             Assert.Equal(Status.Inactive, reloaded.Status);
             Assert.Equal(0m, reloaded.Balance);
             Assert.Equal(0m, reloaded.TotalPurchases);
@@ -258,7 +258,7 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Phone = "5550199",
                 Email = $"{_marker}-updated@example.com",
                 Address = "99 Updated Ave",
-                Type = "Service",
+                Type = VendorType.Service,
                 Status = Status.Active
             };
 
@@ -272,7 +272,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(inserted.Id, reloaded!.Id);
             Assert.Equal(update.Name, reloaded.Name);
             Assert.Equal(update.Email, reloaded.Email);
-            Assert.Equal("Service", reloaded.Type);
+            Assert.Equal(VendorType.Service, reloaded.Type);
             Assert.Equal(123.45m, reloaded.Balance);
             Assert.Equal(678.90m, reloaded.TotalPurchases);
         }
@@ -285,7 +285,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             var update = new VendorUpdateDto
             {
                 Name = inserted.Name,
-                Type = inserted.Type!,
+                Type = inserted.Type!.Value,
                 Status = Status.Inactive
             };
 
@@ -306,7 +306,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             var update = new VendorUpdateDto
             {
                 Name = $"{_marker} Ghost",
-                Type = "Parts",
+                Type = VendorType.Parts,
                 Status = Status.Active
             };
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Services.Abstractions.ServiceInterfaces
@@ -17,7 +18,7 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
     {
         Task<PagedList<VendorResponseDto>> GetAllVendors(VendorParameters vendorParameters);
         Task<VendorResponseDto?> GetVendorById(long id);
-        Task<IEnumerable<VendorResponseDto>> GetActiveVendors(string? type = null);
+        Task<IEnumerable<VendorResponseDto>> GetActiveVendors(VendorType? type = null);
         Task<VendorResponseDto> AddVendor(VendorCreateDto vendor);
         Task<VendorResponseDto?> UpdateVendor(long id, VendorUpdateDto vendor);
         Task<DeleteVendorResult> DeleteVendor(long id);

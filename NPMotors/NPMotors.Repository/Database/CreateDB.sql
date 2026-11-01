@@ -108,6 +108,10 @@ CREATE TABLE vehicle (
     status            VARCHAR(30)
 );
 
+-- v4 make VIN unique
+ALTER TABLE vehicle
+    ADD CONSTRAINT uq_vehicle_vin UNIQUE (vin),
+    ADD CONSTRAINT ck_vehicle_vin_len CHECK (char_length(vin) = 17);
 
 
 CREATE TABLE ap_bill (

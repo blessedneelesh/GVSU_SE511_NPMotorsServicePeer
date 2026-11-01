@@ -21,8 +21,6 @@ namespace NPMotors.Repository.Repositories
             _repositoryContext = repositoryContext;
         }
 
-        private static readonly string[] AllowedTypes = { "vehicle", "parts", "service" };
-
         private const string VendorColumns =
             "id, name, contact, phone, email, address, type, balance, total_purchases AS TotalPurchases, status";
 
@@ -39,12 +37,10 @@ namespace NPMotors.Repository.Repositories
                 queryParams.Add("Status", vendorParameters.Status.Value.ToDbValue());
             }
 
-            var type = vendorParameters.Type?.Trim();
-            if (!string.IsNullOrWhiteSpace(type) &&
-                AllowedTypes.Contains(type, StringComparer.OrdinalIgnoreCase))
+            if (vendorParameters.Type.HasValue)
             {
                 whereClauses.Add("LOWER(type) = @Type");
-                queryParams.Add("Type", type.ToLowerInvariant());
+                queryParams.Add("Type", vendorParameters.Type.Value.ToString().ToLowerInvariant());
             }
 
             var searchTerm = vendorParameters.SearchTerm?.Trim();
@@ -89,19 +85,17 @@ namespace NPMotors.Repository.Repositories
                 new { Id = id });
         }
 
-        public async Task<IEnumerable<VendorResponseDto>> GetActiveVendors(string? type = null)
+        public async Task<IEnumerable<VendorResponseDto>> GetActiveVendors(VendorType? type = null)
         {
             using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
 
             var whereSql = "LOWER(status) = 'active'";
             var queryParams = new DynamicParameters();
 
-            var trimmedType = type?.Trim();
-            if (!string.IsNullOrWhiteSpace(trimmedType) &&
-                AllowedTypes.Contains(trimmedType, StringComparer.OrdinalIgnoreCase))
+            if (type.HasValue)
             {
                 whereSql += " AND LOWER(type) = @Type";
-                queryParams.Add("Type", trimmedType.ToLowerInvariant());
+                queryParams.Add("Type", type.Value.ToString().ToLowerInvariant());
             }
 
             return await connection.QueryAsync<VendorResponseDto>(
@@ -119,7 +113,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Phone", vendor.Phone?.Trim());
             queryParams.Add("Email", vendor.Email?.Trim());
             queryParams.Add("Address", vendor.Address?.Trim());
-            queryParams.Add("Type", vendor.Type.Trim());
+            queryParams.Add("Type", vendor.Type.ToString());
             queryParams.Add("Status", vendor.Status.ToDbValue());
 
             // balance and total_purchases are not written; the column defaults (0) apply.
@@ -141,7 +135,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Phone", vendor.Phone?.Trim());
             queryParams.Add("Email", vendor.Email?.Trim());
             queryParams.Add("Address", vendor.Address?.Trim());
-            queryParams.Add("Type", vendor.Type.Trim());
+            queryParams.Add("Type", vendor.Type.ToString());
             queryParams.Add("Status", vendor.Status.ToDbValue());
 
             return await connection.QuerySingleOrDefaultAsync<VendorResponseDto>(
