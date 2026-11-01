@@ -5,6 +5,7 @@ using Newtonsoft.Json;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
+using NPMotors.Repository.RequestFeatures;
 
 namespace Module.Tests.Controllers
 {
@@ -353,9 +354,302 @@ namespace Module.Tests.Controllers
             Assert.Equal(VehicleStatus.Available, vehicle!.Status);
         }
 
+        // ---- Story 9: GetAllSalesInvoices / GetSalesInvoiceById / CancelSalesInvoice ----
+
+        private sealed class ListResponse
+        {
+            public List<SalesInvoiceResponseDto> Items { get; set; } = new();
+            public MetaData MetaData { get; set; } = new();
+        }
+
+        private async Task<SalesInvoiceResponseDto> NewPostedAsync(DateTime? date = null)
+        {
+            var dto = await ValidDtoAsync();
+            if (date is not null) dto.Invoice_Date = date.Value;
+            var response = await PostInvoiceAsync(dto);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+        }
+
+        private async Task<SalesInvoiceResponseDto> NewDraftAsync()
+        {
+            var response = await PostAsync(await ValidDtoAsync());
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+        }
+
+        private Task<HttpResponseMessage> CancelAsync(string id, object? body) =>
+            _testClient.PostAsync($"SalesInvoice/CancelSalesInvoice?id={id}", Json(body));
+
+        private async Task<ListResponse> GetListAsync(string query)
+        {
+            var response = await _testClient.GetAsync($"SalesInvoice/GetAllSalesInvoices?SearchTerm={_marker}{query}");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return (await ReadAsync<ListResponse>(response))!;
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_Returns200WithItemsAndMetaData()
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await _testClient.GetAsync($"SalesInvoice/GetAllSalesInvoices?SearchTerm={_marker}");
+            var text = await response.Content.ReadAsStringAsync();
+            var body = JsonConvert.DeserializeObject<ListResponse>(text)!;
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Contains("\"items\"", text);
+            Assert.Contains("\"metaData\"", text);
+            Assert.Equal(posted.Id, Assert.Single(body.Items).Id);
+            Assert.Equal(1, body.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_ItemsHaveCalculatedTotalAndBalance()
+        {
+            await NewPostedAsync();
+
+            var item = Assert.Single((await GetListAsync("")).Items);
+
+            Assert.Equal(18500m, item.Total);
+            Assert.Equal(18500m, item.Balance);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_BindsLifecycleAndStatusFilters()
+        {
+            var draft = await NewDraftAsync();
+            var posted = await NewPostedAsync();
+
+            var drafts = await GetListAsync("&Lifecycle=draft");
+            var unpaid = await GetListAsync("&Lifecycle=posted&Status=unpaid");
+            var paid = await GetListAsync("&Status=paid");
+
+            Assert.Equal(draft.Id, Assert.Single(drafts.Items).Id);
+            Assert.Equal(posted.Id, Assert.Single(unpaid.Items).Id);
+            Assert.Empty(paid.Items);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_BindsDateRange()
+        {
+            await NewPostedAsync(new DateTime(2026, 5, 1));
+            var june = await NewPostedAsync(new DateTime(2026, 6, 1));
+
+            var result = await GetListAsync("&FromDate=2026-05-15&ToDate=2026-06-30");
+
+            Assert.Equal(june.Id, Assert.Single(result.Items).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_BindsPaging()
+        {
+            await NewPostedAsync(new DateTime(2026, 5, 1));
+            await NewPostedAsync(new DateTime(2026, 6, 1));
+
+            var result = await GetListAsync("&PageNumber=2&PageSize=1");
+
+            Assert.Single(result.Items);
+            Assert.Equal(2, result.MetaData.TotalCount);
+            Assert.Equal(2, result.MetaData.CurrentPage);
+            Assert.Equal(1, result.MetaData.PageSize);
+            Assert.Equal(2, result.MetaData.TotalPages);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_NoMatches_Returns200WithEmptyItems()
+        {
+            var response = await _testClient.GetAsync($"SalesInvoice/GetAllSalesInvoices?SearchTerm={_marker}-none");
+            var body = await ReadAsync<ListResponse>(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Empty(body!.Items);
+            Assert.Equal(0, body.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_Existing_Returns200WithCalculatedFields()
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await _testClient.GetAsync($"SalesInvoice/GetSalesInvoiceById?id={posted.Id}");
+            var body = await ReadAsync<SalesInvoiceResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(posted.Id, body!.Id);
+            Assert.Equal($"{_marker} Buyer", body.Customer_Name);
+            Assert.Equal("Honda", body.Make);
+            Assert.Equal(18500m, body.Total);
+            Assert.Equal(18500m, body.Balance);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_Unknown_Returns404()
+        {
+            var response = await _testClient.GetAsync($"SalesInvoice/GetSalesInvoiceById?id={long.MaxValue}");
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_NonNumericId_Returns400()
+        {
+            var response = await _testClient.GetAsync("SalesInvoice/GetSalesInvoiceById?id=abc");
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_Posted_Returns200WithCancelledInvoice()
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await CancelAsync(posted.Id.ToString(), new { Reason = "Customer changed their mind" });
+            var body = await ReadAsync<SalesInvoiceResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(posted.Id, body!.Id);
+            Assert.Equal(InvoiceLifecycle.Cancelled, body.Lifecycle);
+            Assert.Equal("Customer changed their mind", body.Cancel_Reason);
+            Assert.Equal(18500m, body.Total);
+            Assert.Equal(18500m, body.Balance);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_ReturnsVehicleToAvailableInventory()
+        {
+            var posted = await NewPostedAsync();
+
+            await CancelAsync(posted.Id.ToString(), new { Reason = "Mistake" });
+
+            var vehicle = await _vehicleRepo.GetVehicleById(posted.Vehicle_Id);
+            Assert.Equal(VehicleStatus.Available, vehicle!.Status);
+            var list = await _testClient.GetAsync($"Vehicle/GetAllVehicles?Status=available&SearchTerm={_marker}");
+            Assert.Contains($"\"id\":{posted.Vehicle_Id},", (await list.Content.ReadAsStringAsync()).ToLowerInvariant());
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_InvoiceStaysInListAndCanBeOpened()
+        {
+            var posted = await NewPostedAsync();
+            await CancelAsync(posted.Id.ToString(), new { Reason = "Mistake" });
+
+            var list = await GetListAsync("&Lifecycle=cancelled");
+            var open = await _testClient.GetAsync($"SalesInvoice/GetSalesInvoiceById?id={posted.Id}");
+
+            Assert.Equal(posted.Id, Assert.Single(list.Items).Id);
+            Assert.Equal(HttpStatusCode.OK, open.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_UnknownId_Returns404()
+        {
+            var response = await CancelAsync(long.MaxValue.ToString(), new { Reason = "Mistake" });
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_Draft_Returns400()
+        {
+            var draft = await NewDraftAsync();
+
+            var response = await CancelAsync(draft.Id.ToString(), new { Reason = "Mistake" });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("Only Posted invoices can be cancelled.", await response.Content.ReadAsStringAsync());
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_AlreadyCancelled_Returns400()
+        {
+            var posted = await NewPostedAsync();
+            await CancelAsync(posted.Id.ToString(), new { Reason = "First" });
+
+            var response = await CancelAsync(posted.Id.ToString(), new { Reason = "Second" });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_WithPayments_Returns400AndInvoiceStaysPosted()
+        {
+            var posted = await NewPostedAsync();
+            using (var connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync("UPDATE sales_invoice SET paid = 100 WHERE id = @Id", new { posted.Id });
+
+            var response = await CancelAsync(posted.Id.ToString(), new { Reason = "Mistake" });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("payments", await response.Content.ReadAsStringAsync());
+            var open = await ReadAsync<SalesInvoiceResponseDto>(
+                await _testClient.GetAsync($"SalesInvoice/GetSalesInvoiceById?id={posted.Id}"));
+            Assert.Equal(InvoiceLifecycle.Posted, open!.Lifecycle);
+        }
+
         [Theory]
-        [InlineData("GET", "SalesInvoice/GetAllSalesInvoices")]
-        [InlineData("GET", "SalesInvoice/GetSalesInvoiceById?id=1")]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task CancelSalesInvoice_BlankReason_Returns400AndInvoiceStaysPosted(string reason)
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await CancelAsync(posted.Id.ToString(), new { Reason = reason });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var open = await ReadAsync<SalesInvoiceResponseDto>(
+                await _testClient.GetAsync($"SalesInvoice/GetSalesInvoiceById?id={posted.Id}"));
+            Assert.Equal(InvoiceLifecycle.Posted, open!.Lifecycle);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_MissingReason_Returns400()
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await CancelAsync(posted.Id.ToString(), new { });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_ReasonLongerThan500_Returns400()
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await CancelAsync(posted.Id.ToString(), new { Reason = new string('a', 501) });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_Reason500Characters_Returns200()
+        {
+            var posted = await NewPostedAsync();
+
+            var response = await CancelAsync(posted.Id.ToString(), new { Reason = new string('a', 500) });
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_NonNumericId_Returns400()
+        {
+            var response = await CancelAsync("abc", new { Reason = "Mistake" });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_NonJsonBody_Returns400()
+        {
+            var response = await _testClient.PostAsync("SalesInvoice/CancelSalesInvoice?id=1",
+                new StringContent("not json", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Theory]
         [InlineData("PUT", "SalesInvoice/UpdateSalesInvoice?id=1")]
         [InlineData("DELETE", "SalesInvoice/DeleteSalesInvoice?id=1")]
         public async Task OtherEndpoints_AreNotMapped(string method, string url)

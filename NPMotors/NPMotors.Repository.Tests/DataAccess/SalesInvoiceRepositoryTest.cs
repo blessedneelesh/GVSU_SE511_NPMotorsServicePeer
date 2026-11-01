@@ -2,6 +2,7 @@ using System.Data;
 using Dapper;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
+using NPMotors.Repository.RequestFeatures;
 using NPMotors.Repository.Repositories;
 
 namespace NPMotors.Repository.Tests.DataAccess
@@ -451,6 +452,389 @@ namespace NPMotors.Repository.Tests.DataAccess
                 "SELECT status, invoice_id AS InvoiceId FROM vehicle WHERE id = @Id", new { Id = vehicle.Id });
             Assert.Equal("available", row.Status);
             Assert.Null(row.InvoiceId);
+        }
+
+        // ---- Story 9: GetAllSalesInvoices / GetSalesInvoiceById / CancelSalesInvoice ----
+        // Every customer created by these tests has First_Name = _marker, so SearchTerm = _marker isolates this test's invoices.
+
+        private SalesInvoiceParameters Params(string? lifecycle = null, string? status = null, string? search = null,
+            DateTime? from = null, DateTime? to = null, int pageNumber = 1, int pageSize = 50) => new()
+        {
+            SearchTerm = search ?? _marker,
+            Lifecycle = lifecycle,
+            Status = status,
+            FromDate = from,
+            ToDate = to,
+            PageNumber = pageNumber,
+            PageSize = pageSize
+        };
+
+        private async Task<SalesInvoiceResponseDto> NewPostedAsync(string suffix = "1", DateTime? date = null)
+        {
+            var dto = await ValidDtoAsync(suffix);
+            if (date is not null) dto.Invoice_Date = date.Value;
+            return await PostAsync(dto);
+        }
+
+        private async Task<SalesInvoiceResponseDto> NewDraftAsync(string suffix = "1")
+        {
+            return await AddAsync(await ValidDtoAsync(suffix));
+        }
+
+        private async Task<SalesInvoiceResponseDto> CancelAsync(long id, string reason = "Entered by mistake")
+        {
+            return await _repository.CancelSalesInvoice(id, new SalesInvoiceCancelDto { Reason = reason });
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_NoFilters_ReturnsAllMatchingTheSearch()
+        {
+            var draft = await NewDraftAsync("1");
+            var posted = await NewPostedAsync("2");
+
+            var result = await _repository.GetAllSalesInvoices(Params());
+
+            Assert.Equal(new[] { draft.Id, posted.Id }.OrderBy(x => x), result.Select(i => i.Id).OrderBy(x => x));
+            Assert.Equal(2, result.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_LifecycleFilter_ReturnsOnlyThatLifecycle()
+        {
+            var draft = await NewDraftAsync("1");
+            var posted = await NewPostedAsync("2");
+
+            var drafts = await _repository.GetAllSalesInvoices(Params(lifecycle: "draft"));
+            var posteds = await _repository.GetAllSalesInvoices(Params(lifecycle: "Posted"));
+
+            Assert.Equal(draft.Id, Assert.Single(drafts).Id);
+            Assert.Equal(posted.Id, Assert.Single(posteds).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_CancelledInvoicesAreIncluded()
+        {
+            var posted = await NewPostedAsync("1");
+            await CancelAsync(posted.Id);
+
+            var all = await _repository.GetAllSalesInvoices(Params());
+            var cancelled = await _repository.GetAllSalesInvoices(Params(lifecycle: "cancelled"));
+
+            var item = Assert.Single(all);
+            Assert.Equal(posted.Id, item.Id);
+            Assert.Equal(InvoiceLifecycle.Cancelled, item.Lifecycle);
+            Assert.Equal(posted.Id, Assert.Single(cancelled).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_StatusFilter_ReturnsOnlyThatPaymentStatus()
+        {
+            await NewDraftAsync("1");               // draft: no payment status
+            var posted = await NewPostedAsync("2");  // posted: unpaid
+
+            var unpaid = await _repository.GetAllSalesInvoices(Params(status: "UNPAID"));
+            var paid = await _repository.GetAllSalesInvoices(Params(status: "paid"));
+
+            Assert.Equal(posted.Id, Assert.Single(unpaid).Id);
+            Assert.Empty(paid);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_LifecycleAndStatus_BothApply()
+        {
+            var posted = await NewPostedAsync("1");
+            await NewDraftAsync("2");
+
+            var both = await _repository.GetAllSalesInvoices(Params(lifecycle: "posted", status: "unpaid"));
+            var none = await _repository.GetAllSalesInvoices(Params(lifecycle: "draft", status: "unpaid"));
+
+            Assert.Equal(posted.Id, Assert.Single(both).Id);
+            Assert.Empty(none);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_SearchByNumber_IsPartialAndCaseInsensitive()
+        {
+            var posted = await NewPostedAsync("1");
+            await NewPostedAsync("2");
+
+            // Number looks like INV-000123; search the lower-case form of the whole number, scoped by nothing else.
+            var result = await _repository.GetAllSalesInvoices(Params(search: posted.Number.ToLowerInvariant()));
+
+            Assert.Equal(posted.Id, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_SearchByCustomerName_IsPartialAndCaseInsensitive()
+        {
+            var posted = await NewPostedAsync("1");
+
+            var result = await _repository.GetAllSalesInvoices(Params(search: $"{_marker.ToUpperInvariant()} BUY"));
+
+            Assert.Equal(posted.Id, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_SearchByVin_IsPartialAndCaseInsensitive()
+        {
+            var posted = await NewPostedAsync("1");
+            var vin = (await _vehicleRepository.GetVehicleById(posted.Vehicle_Id))!.Vin;
+
+            var result = await _repository.GetAllSalesInvoices(Params(search: vin.Substring(2, 12).ToLowerInvariant()));
+
+            Assert.Equal(posted.Id, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_SearchAndLifecycle_BothApply()
+        {
+            await NewDraftAsync("1");
+            var posted = await NewPostedAsync("2");
+
+            var result = await _repository.GetAllSalesInvoices(Params(lifecycle: "posted", search: _marker));
+
+            Assert.Equal(posted.Id, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_DateRange_FromAndToAreInclusive()
+        {
+            var may = await NewPostedAsync("1", new DateTime(2026, 5, 1));
+            var june = await NewPostedAsync("2", new DateTime(2026, 6, 1));
+            var july = await NewPostedAsync("3", new DateTime(2026, 7, 1));
+
+            var from = await _repository.GetAllSalesInvoices(Params(from: new DateTime(2026, 6, 1)));
+            var to = await _repository.GetAllSalesInvoices(Params(to: new DateTime(2026, 6, 1)));
+            var between = await _repository.GetAllSalesInvoices(Params(from: new DateTime(2026, 6, 1), to: new DateTime(2026, 6, 1)));
+
+            Assert.Equal(new[] { june.Id, july.Id }.OrderBy(x => x), from.Select(i => i.Id).OrderBy(x => x));
+            Assert.Equal(new[] { may.Id, june.Id }.OrderBy(x => x), to.Select(i => i.Id).OrderBy(x => x));
+            Assert.Equal(june.Id, Assert.Single(between).Id);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_OrderedByDateDescendingThenIdDescending()
+        {
+            var may = await NewPostedAsync("1", new DateTime(2026, 5, 1));
+            var juneFirst = await NewPostedAsync("2", new DateTime(2026, 6, 1));
+            var juneSecond = await NewPostedAsync("3", new DateTime(2026, 6, 1));
+
+            var result = await _repository.GetAllSalesInvoices(Params());
+
+            Assert.Equal(new[] { juneSecond.Id, juneFirst.Id, may.Id }, result.Select(i => i.Id));
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_Paging_SecondPageAndTotalCountCountsAllMatches()
+        {
+            var first = await NewPostedAsync("1", new DateTime(2026, 5, 1));
+            var second = await NewPostedAsync("2", new DateTime(2026, 6, 1));
+            var third = await NewPostedAsync("3", new DateTime(2026, 7, 1));
+
+            var page2 = await _repository.GetAllSalesInvoices(Params(pageNumber: 2, pageSize: 2));
+
+            // Newest first: [third, second] | [first]
+            Assert.Equal(first.Id, Assert.Single(page2).Id);
+            Assert.Equal(3, page2.MetaData.TotalCount);
+            Assert.Equal(2, page2.MetaData.CurrentPage);
+            Assert.Equal(2, page2.MetaData.PageSize);
+            Assert.Equal(2, page2.MetaData.TotalPages);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_PageSizeAboveCap_IsClamped()
+        {
+            await NewPostedAsync("1");
+
+            var result = await _repository.GetAllSalesInvoices(Params(pageSize: 500));
+
+            Assert.Equal(100, result.MetaData.PageSize);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_NoMatches_ReturnsEmptyPagedList()
+        {
+            await NewPostedAsync("1");
+
+            var result = await _repository.GetAllSalesInvoices(Params(search: $"{_marker}-no-such-invoice"));
+
+            Assert.NotNull(result);
+            Assert.Empty(result);
+            Assert.Equal(0, result.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_IncludesJoinedCustomerAndVehicleColumns()
+        {
+            var posted = await NewPostedAsync("1");
+
+            var item = Assert.Single(await _repository.GetAllSalesInvoices(Params()));
+
+            Assert.Equal($"{_marker} Buyer", item.Customer_Name);
+            Assert.Equal(posted.Vehicle_Id, item.Vehicle_Id);
+            Assert.Equal("Toyota", item.Make);
+            Assert.Equal("Camry", item.Model);
+            Assert.Equal(17, item.Vin.Length);
+            Assert.Equal("sold", item.Vehicle_Status);
+            Assert.Equal(25000m, item.Sale_Price);
+            Assert.Equal(PaymentStatus.Unpaid, item.Payment_Status);
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_CalculatedFieldsAreNotFilled()
+        {
+            await NewPostedAsync("1");
+
+            var item = Assert.Single(await _repository.GetAllSalesInvoices(Params()));
+
+            // Total and Balance are the service's job.
+            Assert.Equal(0m, item.Total);
+            Assert.Equal(0m, item.Balance);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_Existing_ReturnsInvoiceWithJoinedColumns()
+        {
+            var posted = await NewPostedAsync("1");
+
+            var found = await _repository.GetSalesInvoiceById(posted.Id);
+
+            Assert.NotNull(found);
+            Assert.Equal(posted.Id, found!.Id);
+            Assert.Equal(posted.Number, found.Number);
+            Assert.Equal($"{_marker} Buyer", found.Customer_Name);
+            Assert.Equal("Toyota", found.Make);
+            Assert.Equal(InvoiceLifecycle.Posted, found.Lifecycle);
+            Assert.Null(found.Cancel_Reason);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_Unknown_ReturnsNull()
+        {
+            Assert.Null(await _repository.GetSalesInvoiceById(long.MaxValue));
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_Posted_ReturnsCancelledInvoiceWithReason()
+        {
+            var posted = await NewPostedAsync("1");
+
+            var cancelled = await CancelAsync(posted.Id, "Customer changed their mind");
+
+            Assert.Equal(posted.Id, cancelled.Id);
+            Assert.Equal(InvoiceLifecycle.Cancelled, cancelled.Lifecycle);
+            Assert.Equal("Customer changed their mind", cancelled.Cancel_Reason);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_StoresLifecycleReasonAndKeepsPaymentStatusAndVehicle()
+        {
+            var posted = await NewPostedAsync("1");
+
+            await CancelAsync(posted.Id, "Wrong vehicle");
+
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            var row = await connection.QuerySingleAsync<(string Lifecycle, string CancelReason, string PaymentStatus, long VehicleId)>(
+                "SELECT lifecycle, cancel_reason AS CancelReason, payment_status AS PaymentStatus, vehicle_id AS VehicleId FROM sales_invoice WHERE id = @Id",
+                new { posted.Id });
+            Assert.Equal("cancelled", row.Lifecycle);
+            Assert.Equal("Wrong vehicle", row.CancelReason);
+            Assert.Equal("unpaid", row.PaymentStatus);
+            Assert.Equal(posted.Vehicle_Id, row.VehicleId);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_ReturnsVehicleToInventory()
+        {
+            var posted = await NewPostedAsync("1");
+
+            await CancelAsync(posted.Id);
+
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            var row = await connection.QuerySingleAsync<(string Status, long? InvoiceId)>(
+                "SELECT status, invoice_id AS InvoiceId FROM vehicle WHERE id = @Id", new { Id = posted.Vehicle_Id });
+            Assert.Equal("available", row.Status);
+            Assert.Null(row.InvoiceId);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_InvoiceStaysReadableAfterwards()
+        {
+            var posted = await NewPostedAsync("1");
+            await CancelAsync(posted.Id);
+
+            var found = await _repository.GetSalesInvoiceById(posted.Id);
+
+            Assert.NotNull(found);
+            Assert.Equal(InvoiceLifecycle.Cancelled, found!.Lifecycle);
+            Assert.Equal(posted.Number, found.Number);
+        }
+
+        // Needs uq_sales_invoice_vehicle_active (unique vehicle_id WHERE lifecycle <> 'cancelled') instead of a plain unique constraint.
+        [Fact]
+        public async Task CancelSalesInvoice_VehicleCanBeInvoicedAgain_AndOldInvoiceKeepsItsVehicle()
+        {
+            var dto = await ValidDtoAsync();
+            var first = await PostAsync(dto);
+            await CancelAsync(first.Id);
+
+            var second = await PostAsync(dto);
+
+            Assert.NotEqual(first.Id, second.Id);
+            Assert.Equal(InvoiceLifecycle.Posted, second.Lifecycle);
+            var old = await _repository.GetSalesInvoiceById(first.Id);
+            Assert.Equal(dto.Vehicle_Id, old!.Vehicle_Id);
+            Assert.Equal(InvoiceLifecycle.Cancelled, old.Lifecycle);
+            var vehicle = await _vehicleRepository.GetVehicleById(dto.Vehicle_Id);
+            Assert.Equal(VehicleStatus.Sold, vehicle!.Status);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_UnknownId_ThrowsKeyNotFound()
+        {
+            await Assert.ThrowsAsync<KeyNotFoundException>(() => CancelAsync(long.MaxValue));
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_Draft_Throws_AndDraftIsUnchanged()
+        {
+            var draft = await NewDraftAsync("1");
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => CancelAsync(draft.Id));
+
+            Assert.Equal("Only Posted invoices can be cancelled.", ex.Message);
+            var found = await _repository.GetSalesInvoiceById(draft.Id);
+            Assert.Equal(InvoiceLifecycle.Draft, found!.Lifecycle);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_AlreadyCancelled_Throws()
+        {
+            var posted = await NewPostedAsync("1");
+            await CancelAsync(posted.Id, "First reason");
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => CancelAsync(posted.Id, "Second reason"));
+
+            Assert.Equal("Only Posted invoices can be cancelled.", ex.Message);
+            var found = await _repository.GetSalesInvoiceById(posted.Id);
+            Assert.Equal("First reason", found!.Cancel_Reason);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_WithPayments_Throws_AndNothingChanges()
+        {
+            var posted = await NewPostedAsync("1");
+            using (IDbConnection connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync("UPDATE sales_invoice SET paid = 100 WHERE id = @Id", new { posted.Id });
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => CancelAsync(posted.Id));
+
+            Assert.Equal("An invoice with payments cannot be cancelled.", ex.Message);
+            var found = await _repository.GetSalesInvoiceById(posted.Id);
+            Assert.Equal(InvoiceLifecycle.Posted, found!.Lifecycle);
+            Assert.Null(found.Cancel_Reason);
+            var vehicle = await _vehicleRepository.GetVehicleById(posted.Vehicle_Id);
+            Assert.Equal(VehicleStatus.Sold, vehicle!.Status);
         }
     }
 }

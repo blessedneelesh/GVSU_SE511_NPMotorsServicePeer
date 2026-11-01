@@ -1,6 +1,7 @@
 using NPMotors.Repository.Interface;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
+using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Service;
 
 namespace Module.Tests.Services
@@ -10,6 +11,39 @@ namespace Module.Tests.Services
         // Hand-written fake: the test projects do not use a mocking library.
         private class FakeSalesInvoiceRepository : ISalesInvoiceRepository
         {
+            // Story 9: browse and cancel.
+            public PagedList<SalesInvoiceResponseDto> Page { get; set; } = new(new List<SalesInvoiceResponseDto>(), 0, 1, 5);
+            public SalesInvoiceResponseDto? ByIdResult { get; set; }
+            public SalesInvoiceResponseDto? CancelResult { get; set; }
+            public List<(long Id, SalesInvoiceCancelDto Reason)> CancelCalls { get; } = new();
+
+            public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters)
+            {
+                return Task.FromResult(Page);
+            }
+
+            public Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id)
+            {
+                return Task.FromResult(ByIdResult);
+            }
+
+            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+            {
+                CancelCalls.Add((id, reason));
+                // Like the real repository: stored columns only, Total/Balance left at their defaults.
+                return Task.FromResult(CancelResult ?? new SalesInvoiceResponseDto
+                {
+                    Id = id,
+                    Sale_Price = 20000m,
+                    Tax = 1500m,
+                    Fees = 300m,
+                    Discount = 500m,
+                    Paid = 0m,
+                    Lifecycle = InvoiceLifecycle.Cancelled,
+                    Cancel_Reason = reason.Reason
+                });
+            }
+
             public SalesInvoiceResponseDto? Result { get; set; }
             // Stands in for vehicle.selling_price, which the real repository uses as the sale price.
             public decimal SellingPrice { get; set; } = 20000m;
@@ -267,6 +301,139 @@ namespace Module.Tests.Services
             var invoice = NewInvoice();
             invoice.Customer_Id = customerId;
             await AssertPostRejectedAsync(invoice, "Customer is required.");
+        }
+
+        // ---- Story 9: GetAllSalesInvoices (CalculateTotal / CalculateBalance applied to every item) ----
+
+        private static SalesInvoiceResponseDto Stored(long id, decimal salePrice, decimal tax, decimal fees, decimal discount, decimal paid) => new()
+        {
+            Id = id,
+            Sale_Price = salePrice,
+            Tax = tax,
+            Fees = fees,
+            Discount = discount,
+            Paid = paid,
+            Lifecycle = InvoiceLifecycle.Posted
+        };
+
+        [Fact]
+        public async Task GetAllSalesInvoices_CalculatesTotalAndBalanceForEveryItem()
+        {
+            _repository.Page = new PagedList<SalesInvoiceResponseDto>(new List<SalesInvoiceResponseDto>
+            {
+                Stored(1, 20000m, 1500m, 300m, 500m, 5000m),   // total 21 300, balance 16 300
+                Stored(2, 10000m, 0m, 200m, 0m, 10200m),       // total 10 200, balance 0
+                Stored(3, 30000m, 2000m, 0m, 1000m, 1000m)     // total 31 000, balance 30 000
+            }, 3, 1, 5);
+
+            var result = await _service.GetAllSalesInvoices(new SalesInvoiceParameters());
+
+            Assert.Equal(new[] { 21300m, 10200m, 31000m }, result.Select(i => i.Total));
+            Assert.Equal(new[] { 16300m, 0m, 30000m }, result.Select(i => i.Balance));
+        }
+
+        [Fact]
+        public async Task GetAllSalesInvoices_OverpaidInvoice_BalanceIsNegativeNotClamped()
+        {
+            _repository.Page = new PagedList<SalesInvoiceResponseDto>(
+                new List<SalesInvoiceResponseDto> { Stored(1, 1000m, 0m, 0m, 0m, 1500m) }, 1, 1, 5);
+
+            var result = await _service.GetAllSalesInvoices(new SalesInvoiceParameters());
+
+            Assert.Equal(-500m, Assert.Single(result).Balance);
+        }
+
+        // ---- Story 9: GetSalesInvoiceById ----
+
+        [Fact]
+        public async Task GetSalesInvoiceById_CalculatesTotal_SalePricePlusTaxPlusFeesMinusDiscount()
+        {
+            _repository.ByIdResult = Stored(1, 20000m, 1500m, 300m, 500m, 0m);
+
+            var result = await _service.GetSalesInvoiceById(1);
+
+            Assert.Equal(21300m, result!.Total);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_TotalKeepsCents()
+        {
+            _repository.ByIdResult = Stored(1, 19999.99m, 1200.50m, 99.25m, 0.74m, 0m);
+
+            var result = await _service.GetSalesInvoiceById(1);
+
+            Assert.Equal(21299.00m, result!.Total);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_BalanceSubtractsPaid()
+        {
+            _repository.ByIdResult = Stored(1, 20000m, 1500m, 300m, 500m, 5000m);
+
+            var result = await _service.GetSalesInvoiceById(1);
+
+            Assert.Equal(16300m, result!.Balance);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceById_FullyPaid_BalanceIsZero()
+        {
+            _repository.ByIdResult = Stored(1, 20000m, 1500m, 300m, 500m, 21300m);
+
+            var result = await _service.GetSalesInvoiceById(1);
+
+            Assert.Equal(0m, result!.Balance);
+        }
+
+        // ---- Story 9: CancelSalesInvoice ----
+
+        [Fact]
+        public async Task CancelSalesInvoice_CalculatesTotalAndBalanceOnReturnedInvoice()
+        {
+            var result = await _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" });
+
+            Assert.Equal(21300m, result.Total);
+            Assert.Equal(21300m, result.Balance);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_PassesIdAndTrimmedReasonToRepository()
+        {
+            await _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "  Wrong customer  " });
+
+            var call = Assert.Single(_repository.CancelCalls);
+            Assert.Equal(7, call.Id);
+            Assert.Equal("Wrong customer", call.Reason.Reason);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task CancelSalesInvoice_BlankReason_ThrowsAndDoesNotCallRepository(string reason)
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = reason }));
+
+            Assert.Equal("A cancellation reason is required.", ex.Message);
+            Assert.Empty(_repository.CancelCalls);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_NullDto_ThrowsAndDoesNotCallRepository()
+        {
+            await Assert.ThrowsAsync<ArgumentException>(() => _service.CancelSalesInvoice(7, null!));
+
+            Assert.Empty(_repository.CancelCalls);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_Reason501Characters_ThrowsAndDoesNotCallRepository()
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = new string('a', 501) }));
+
+            Assert.Equal("The cancellation reason cannot exceed 500 characters.", ex.Message);
+            Assert.Empty(_repository.CancelCalls);
         }
 
     }
