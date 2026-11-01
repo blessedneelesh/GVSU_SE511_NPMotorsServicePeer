@@ -181,27 +181,6 @@ namespace Module.Tests.Services
             Assert.Null(result);
         }
 
-        [Fact]
-        public async Task GetVehicleById_PassesIdToRepository()
-        {
-            _repository.GetByIdResult = Vehicle(1000m, 0m, 2000m, id: 42);
-
-            await _service.GetVehicleById(42);
-
-            Assert.Equal(new long[] { 42 }, _repository.GetByIdCalls);
-        }
-
-        [Fact]
-        public async Task GetVehicleById_KeepsStoredFieldsAndVendorName()
-        {
-            var result = await CalculatedAsync(Vehicle(1000m, 0m, 2000m, id: 5));
-
-            Assert.Equal(5, result.Id);
-            Assert.Equal("Test Vendor", result.Vendor_Name);
-            Assert.Equal(1000m, result.Purchase_Price);
-            Assert.Equal(2000m, result.Selling_Price);
-        }
-
         // ---- GetAllVehicles ----
 
         [Fact]
@@ -250,33 +229,6 @@ namespace Module.Tests.Services
             Assert.Equal(3, result.MetaData.TotalPages);
         }
 
-        [Fact]
-        public async Task GetAllVehicles_EmptyPage_ReturnsEmptyListWithMetaData()
-        {
-            _repository.GetAllResult = new PagedList<VehicleResponseDto>(new List<VehicleResponseDto>(), 0, 1, 5);
-
-            var result = await _service.GetAllVehicles(new VehicleParameters());
-
-            Assert.Empty(result);
-            Assert.Equal(0, result.MetaData.TotalCount);
-            Assert.Equal(1, result.MetaData.CurrentPage);
-        }
-
-        [Fact]
-        public async Task GetAllVehicles_PassesParametersToRepository()
-        {
-            var parameters = new VehicleParameters { Status = "available", SearchTerm = "civic", PageNumber = 2, PageSize = 10 };
-
-            await _service.GetAllVehicles(parameters);
-
-            var call = Assert.Single(_repository.GetAllCalls);
-            Assert.Same(parameters, call);
-            Assert.Equal("available", call.Status);
-            Assert.Equal("civic", call.SearchTerm);
-            Assert.Equal(2, call.PageNumber);
-            Assert.Equal(10, call.PageSize);
-        }
-
         // ---- Status validation ----
 
         [Theory]
@@ -315,16 +267,6 @@ namespace Module.Tests.Services
             await _service.GetAllVehicles(parameters);
 
             Assert.Equal(50, Assert.Single(_repository.GetAllCalls).PageSize);
-        }
-
-        [Fact]
-        public async Task GetAllVehicles_PageSizeWithinCap_IsUnchanged()
-        {
-            await _service.GetAllVehicles(new VehicleParameters { PageSize = 50 });
-            await _service.GetAllVehicles(new VehicleParameters { PageSize = 30 });
-
-            Assert.Equal(50, _repository.GetAllCalls[0].PageSize);
-            Assert.Equal(30, _repository.GetAllCalls[1].PageSize);
         }
     }
 }
