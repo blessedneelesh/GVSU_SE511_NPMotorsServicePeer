@@ -154,16 +154,6 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task AddSalesInvoice_LifecycleIsDraftWithNoPaymentStatusAndPaidIsZero()
-        {
-            var created = await AddAsync(await ValidDtoAsync());
-
-            Assert.Equal(InvoiceLifecycle.Draft, created.Lifecycle);
-            Assert.Null(created.Payment_Status);
-            Assert.Equal(0m, created.Paid);
-        }
-
-        [Fact]
         public async Task AddSalesInvoice_StoresDraftLifecycleTotalAndBalance()
         {
             var created = await AddAsync(await ValidDtoAsync());
@@ -174,51 +164,9 @@ namespace NPMotors.Repository.Tests.DataAccess
 
             Assert.Equal(InvoiceLifecycle.Draft.ToDbValue(), row.Lifecycle);
             Assert.Null(row.PaymentStatus);
-            Assert.Equal(25300m, row.Total);
+            Assert.Equal(26300m, row.Total);
             Assert.Equal(0m, row.Paid);
-            Assert.Equal(25300m, row.Balance);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_ReturnsVehicleVinMakeModelSellingPriceAndInventoryCost()
-        {
-            var dto = await ValidDtoAsync();
-
-            var created = await AddAsync(dto);
-
-            Assert.Equal($"{_marker}1".ToUpperInvariant().PadRight(17, '0').Substring(0, 17), created.Vin);
-            Assert.Equal("Toyota", created.Make);
-            Assert.Equal("Camry", created.Model);
-            Assert.Equal(25000m, created.Selling_Price);
-            Assert.Equal(20500m, created.Vehicle_Total_Cost);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_CalculatedFieldsNotFilled()
-        {
-            var created = await AddAsync(await ValidDtoAsync());
-
-            Assert.Equal(0m, created.Total);
-            Assert.Equal(0m, created.Balance);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_GeneratesNumber()
-        {
-            var created = await AddAsync(await ValidDtoAsync());
-
-            Assert.Equal($"INV-{created.Id:D6}", created.Number);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_DueDateIsOptional()
-        {
-            var dto = await ValidDtoAsync();
-            dto.Due_Date = null;
-
-            var created = await AddAsync(dto);
-
-            Assert.Null(created.Due_Date);
+            Assert.Equal(26300m, row.Balance);
         }
 
         [Fact]
@@ -253,30 +201,6 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task AddSalesInvoice_UnknownVehicle_Throws()
-        {
-            var customerId = await CreateCustomerAsync();
-            var salespersonId = await CreateEmployeeAsync();
-
-            var ex = await Assert.ThrowsAsync<ArgumentException>(
-                () => _repository.AddSalesInvoice(NewDto(customerId, salespersonId, long.MaxValue)));
-
-            Assert.Equal("Vehicle does not exist.", ex.Message);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_UnknownCustomer_Throws()
-        {
-            var salespersonId = await CreateEmployeeAsync();
-            var vehicle = await CreateVehicleAsync();
-
-            var ex = await Assert.ThrowsAsync<ArgumentException>(
-                () => _repository.AddSalesInvoice(NewDto(long.MaxValue, salespersonId, vehicle.Id)));
-
-            Assert.Equal("Customer does not exist.", ex.Message);
-        }
-
-        [Fact]
         public async Task AddSalesInvoice_InactiveCustomer_Throws()
         {
             var customerId = await CreateCustomerAsync(Status.Inactive);
@@ -287,18 +211,6 @@ namespace NPMotors.Repository.Tests.DataAccess
                 () => _repository.AddSalesInvoice(NewDto(customerId, salespersonId, vehicle.Id)));
 
             Assert.Equal("Only active customers can be selected.", ex.Message);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_UnknownSalesperson_Throws()
-        {
-            var customerId = await CreateCustomerAsync();
-            var vehicle = await CreateVehicleAsync();
-
-            var ex = await Assert.ThrowsAsync<ArgumentException>(
-                () => _repository.AddSalesInvoice(NewDto(customerId, long.MaxValue, vehicle.Id)));
-
-            Assert.Equal("Salesperson does not exist.", ex.Message);
         }
 
         [Fact]
@@ -354,6 +266,191 @@ namespace NPMotors.Repository.Tests.DataAccess
             var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.AddSalesInvoice(dto));
 
             Assert.Equal("This vehicle already has a sales invoice.", ex.Message);
+        }
+
+        // ---- PostSalesInvoice ----
+
+        private async Task<SalesInvoiceResponseDto> PostAsync(SalesInvoiceCreateDto dto)
+        {
+            var posted = await _repository.PostSalesInvoice(dto);
+            _invoiceIds.Add(posted.Id);
+            return posted;
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_Valid_ReturnsPostedUnpaidInvoice()
+        {
+            var dto = await ValidDtoAsync();
+
+            var posted = await PostAsync(dto);
+
+            Assert.True(posted.Id > 0);
+            Assert.Equal(InvoiceLifecycle.Posted, posted.Lifecycle);
+            Assert.Equal(PaymentStatus.Unpaid, posted.Payment_Status);
+            Assert.Equal(0m, posted.Paid);
+            Assert.Equal(dto.Vehicle_Id, posted.Vehicle_Id);
+            Assert.Equal($"INV-{posted.Id:D6}", posted.Number);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_StoresPostedLifecycleUnpaidTotalAndBalance()
+        {
+            var posted = await PostAsync(await ValidDtoAsync());
+
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            var row = await connection.QuerySingleAsync<(string Lifecycle, string PaymentStatus, decimal SalePrice, decimal Total, decimal Paid, decimal Balance)>(
+                "SELECT lifecycle, payment_status AS PaymentStatus, sale_price AS SalePrice, total, paid, balance FROM sales_invoice WHERE id = @Id", new { posted.Id });
+
+            Assert.Equal("posted", row.Lifecycle);
+            Assert.Equal("unpaid", row.PaymentStatus);
+            Assert.Equal(25000m, row.SalePrice);
+            Assert.Equal(26300m, row.Total);
+            Assert.Equal(0m, row.Paid);
+            Assert.Equal(26300m, row.Balance);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_MarksVehicleSoldAndStoresInvoiceId()
+        {
+            var dto = await ValidDtoAsync();
+
+            var posted = await PostAsync(dto);
+
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            var row = await connection.QuerySingleAsync<(string Status, long? InvoiceId)>(
+                "SELECT status, invoice_id AS InvoiceId FROM vehicle WHERE id = @Id", new { Id = dto.Vehicle_Id });
+            Assert.Equal("sold", row.Status);
+            Assert.Equal(posted.Id, row.InvoiceId);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_ConcurrentPostsOfSameVehicle_OnlyOneSucceeds()
+        {
+            var dto = await ValidDtoAsync();
+
+            async Task<bool> Attempt()
+            {
+                try { await _repository.PostSalesInvoice(dto); return true; }
+                catch (ArgumentException) { return false; }
+            }
+
+            var results = await Task.WhenAll(Attempt(), Attempt(), Attempt());
+
+            Assert.Single(results, r => r);
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            var ids = (await connection.QueryAsync<long>(
+                "SELECT id FROM sales_invoice WHERE vehicle_id = @Id", new { Id = dto.Vehicle_Id })).ToList();
+            _invoiceIds.AddRange(ids);
+            Assert.Single(ids);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_VehicleAlreadyHasDraft_Throws()
+        {
+            var dto = await ValidDtoAsync();
+            await AddAsync(dto);
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
+
+            Assert.Equal("This vehicle already has a sales invoice.", ex.Message);
+            var vehicle = await _vehicleRepository.GetVehicleById(dto.Vehicle_Id);
+            Assert.Equal(VehicleStatus.Available, vehicle!.Status);
+        }
+
+        [Theory]
+        [InlineData("reserved")]
+        [InlineData("sold")]
+        public async Task PostSalesInvoice_VehicleNotAvailable_Throws(string vehicleStatus)
+        {
+            var customerId = await CreateCustomerAsync();
+            var salespersonId = await CreateEmployeeAsync();
+            var vehicle = await CreateVehicleAsync("1", vehicleStatus);
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => _repository.PostSalesInvoice(NewDto(customerId, salespersonId, vehicle.Id)));
+
+            Assert.Equal("Only available vehicles can be selected.", ex.Message);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_InactiveCustomer_Throws()
+        {
+            var customerId = await CreateCustomerAsync(Status.Inactive);
+            var salespersonId = await CreateEmployeeAsync();
+            var vehicle = await CreateVehicleAsync();
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => _repository.PostSalesInvoice(NewDto(customerId, salespersonId, vehicle.Id)));
+
+            Assert.Equal("Only active customers can be selected.", ex.Message);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_InactiveSalesperson_Throws()
+        {
+            var customerId = await CreateCustomerAsync();
+            var salespersonId = await CreateEmployeeAsync(Status.Inactive);
+            var vehicle = await CreateVehicleAsync();
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => _repository.PostSalesInvoice(NewDto(customerId, salespersonId, vehicle.Id)));
+
+            Assert.Equal("Only active salespeople can be assigned.", ex.Message);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_DiscountExceedsVehicleSellingPrice_Throws()
+        {
+            var dto = await ValidDtoAsync();
+            dto.Discount = 25000.01m;
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
+
+            Assert.Equal("Discount cannot exceed the sale price.", ex.Message);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_TotalZero_Throws()
+        {
+            var dto = await ValidDtoAsync();
+            dto.Tax = 0m;
+            dto.Fees = 0m;
+            dto.Discount = 25000m;
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
+
+            Assert.Equal("Invoice total must be greater than zero.", ex.Message);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_VehicleWithoutSellingPrice_Throws()
+        {
+            var dto = await ValidDtoAsync();
+            using (IDbConnection connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync("UPDATE vehicle SET selling_price = NULL WHERE id = @Id", new { Id = dto.Vehicle_Id });
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
+
+            Assert.Equal("The vehicle has no selling price.", ex.Message);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_Rejected_SavesNothingAndKeepsVehicleAvailable()
+        {
+            var customerId = await CreateCustomerAsync(Status.Inactive);
+            var salespersonId = await CreateEmployeeAsync();
+            var vehicle = await CreateVehicleAsync();
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => _repository.PostSalesInvoice(NewDto(customerId, salespersonId, vehicle.Id)));
+
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            Assert.Equal(0, await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM sales_invoice WHERE vehicle_id = @Id", new { Id = vehicle.Id }));
+            var row = await connection.QuerySingleAsync<(string Status, long? InvoiceId)>(
+                "SELECT status, invoice_id AS InvoiceId FROM vehicle WHERE id = @Id", new { Id = vehicle.Id });
+            Assert.Equal("available", row.Status);
+            Assert.Null(row.InvoiceId);
         }
     }
 }

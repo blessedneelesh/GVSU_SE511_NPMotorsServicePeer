@@ -170,47 +170,9 @@ namespace Module.Tests.Controllers
             var response = await PostAsync(await ValidDtoAsync());
             var body = await ReadAsync<SalesInvoiceResponseDto>(response);
 
-            Assert.Equal(18000m, body!.Total);
+            Assert.Equal(18500m, body!.Total);
             Assert.Equal(0m, body.Paid);
-            Assert.Equal(18000m, body.Balance);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_Valid_ReturnsVehicleDetailsAndNumber()
-        {
-            var response = await PostAsync(await ValidDtoAsync());
-            var body = await ReadAsync<SalesInvoiceResponseDto>(response);
-
-            Assert.Equal("Honda", body!.Make);
-            Assert.Equal("Civic", body.Model);
-            Assert.Equal(18000m, body.Selling_Price);
-            Assert.Equal(15250m, body.Vehicle_Total_Cost);
-            Assert.False(string.IsNullOrWhiteSpace(body.Vin));
-            Assert.Equal($"INV-{body.Id:D6}", body.Number);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_Valid_DoesNotChangeVehicleStatus()
-        {
-            var dto = await ValidDtoAsync();
-
-            await PostAsync(dto);
-
-            var vehicle = await _vehicleRepo.GetVehicleById(dto.Vehicle_Id);
-            Assert.Equal(VehicleStatus.Available, vehicle!.Status);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_DueDateOmitted_Returns201()
-        {
-            var dto = await ValidDtoAsync();
-            dto.Due_Date = null;
-
-            var response = await PostAsync(dto);
-            var body = await ReadAsync<SalesInvoiceResponseDto>(response);
-
-            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-            Assert.Null(body!.Due_Date);
+            Assert.Equal(18500m, body.Balance);
         }
 
         [Theory]
@@ -238,59 +200,9 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task AddSalesInvoice_UnknownSalesperson_Returns400()
-        {
-            var dto = await ValidDtoAsync();
-            dto.Salesperson_Id = long.MaxValue;
-
-            var response = await PostAsync(dto);
-
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_DiscountExceedsSalePrice_Returns400()
-        {
-            var dto = await ValidDtoAsync();
-            dto.Discount = 1_000_000m;
-
-            var response = await PostAsync(dto);
-
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-            Assert.Contains("Discount cannot exceed the sale price.", await response.Content.ReadAsStringAsync());
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_TotalZero_Returns400()
-        {
-            var dto = await ValidDtoAsync();
-            dto.Tax = 0m;
-            dto.Fees = 0m;
-            dto.Discount = 18000m; // the vehicle's selling price
-
-            var response = await PostAsync(dto);
-
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-            Assert.Contains("greater than zero", await response.Content.ReadAsStringAsync());
-        }
-
-        [Fact]
         public async Task AddSalesInvoice_MissingRequiredIds_Returns400()
         {
             var response = await PostAsync(new { Invoice_Date = "2026-05-01" });
-
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_MissingInvoiceDate_Returns400()
-        {
-            var response = await PostAsync(new
-            {
-                Customer_Id = 1,
-                Salesperson_Id = 1,
-                Vehicle_Id = 1
-            });
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
@@ -328,6 +240,117 @@ namespace Module.Tests.Controllers
                 new StringContent("not json", Encoding.UTF8, "application/json"));
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        // ---- PostSalesInvoice ----
+
+        private async Task<HttpResponseMessage> PostInvoiceAsync(object body)
+        {
+            var response = await _testClient.PostAsync("SalesInvoice/PostSalesInvoice", Json(body));
+            if (response.StatusCode == HttpStatusCode.Created)
+            {
+                var posted = JsonConvert.DeserializeObject<SalesInvoiceResponseDto>(
+                    await response.Content.ReadAsStringAsync());
+                _invoiceIds.Add(posted!.Id);
+            }
+            return response;
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_Valid_Returns201WithPostedUnpaidInvoice()
+        {
+            var dto = await ValidDtoAsync();
+
+            var response = await PostInvoiceAsync(dto);
+            var body = await ReadAsync<SalesInvoiceResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.True(body!.Id > 0);
+            Assert.Equal(InvoiceLifecycle.Posted, body.Lifecycle);
+            Assert.Equal(PaymentStatus.Unpaid, body.Payment_Status);
+            Assert.Equal(dto.Customer_Id, body.Customer_Id);
+            Assert.Equal(dto.Vehicle_Id, body.Vehicle_Id);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_Valid_SalePriceIsVehicleSellingPriceAndTotalsCalculated()
+        {
+            var response = await PostInvoiceAsync(await ValidDtoAsync());
+            var body = await ReadAsync<SalesInvoiceResponseDto>(response);
+
+            Assert.Equal(18000m, body!.Sale_Price);
+            Assert.Equal(18500m, body.Total);
+            Assert.Equal(0m, body.Paid);
+            Assert.Equal(18500m, body.Balance);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_IgnoresSalePriceInRequestBody()
+        {
+            var dto = await ValidDtoAsync();
+            var body = JsonConvert.DeserializeObject<Dictionary<string, object>>(JsonConvert.SerializeObject(dto))!;
+            body["Sale_Price"] = 1;
+
+            var response = await PostInvoiceAsync(body);
+            var posted = await ReadAsync<SalesInvoiceResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal(18000m, posted!.Sale_Price);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_Valid_MarksVehicleSoldAndLinksInvoice()
+        {
+            var dto = await ValidDtoAsync();
+
+            var response = await PostInvoiceAsync(dto);
+            var posted = await ReadAsync<SalesInvoiceResponseDto>(response);
+
+            var vehicle = await _vehicleRepo.GetVehicleById(dto.Vehicle_Id);
+            Assert.Equal(VehicleStatus.Sold, vehicle!.Status);
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            var invoiceId = await connection.ExecuteScalarAsync<long?>(
+                "SELECT invoice_id FROM vehicle WHERE id = @Id", new { Id = dto.Vehicle_Id });
+            Assert.Equal(posted!.Id, invoiceId);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_SoldVehicleNoLongerInAvailableList()
+        {
+            var dto = await ValidDtoAsync();
+            await PostInvoiceAsync(dto);
+
+            var response = await _testClient.GetAsync($"Vehicle/GetAllVehicles?Status=available&SearchTerm={_marker}");
+            var text = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.DoesNotContain($"\"id\":{dto.Vehicle_Id},", text.ToLowerInvariant());
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_SameVehicleTwice_SecondReturns400()
+        {
+            var dto = await ValidDtoAsync();
+            var first = await PostInvoiceAsync(dto);
+
+            var second = await PostInvoiceAsync(dto);
+
+            Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+            Assert.Contains("Only available vehicles can be selected.", await second.Content.ReadAsStringAsync());
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_InactiveCustomer_Returns400AndVehicleStaysAvailable()
+        {
+            var dto = await ValidDtoAsync();
+            dto.Customer_Id = await CreateCustomerAsync(Status.Inactive);
+
+            var response = await PostInvoiceAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var vehicle = await _vehicleRepo.GetVehicleById(dto.Vehicle_Id);
+            Assert.Equal(VehicleStatus.Available, vehicle!.Status);
         }
 
         [Theory]

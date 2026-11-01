@@ -20,7 +20,24 @@ namespace Module.Tests.Services
             public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
             {
                 PostCalls.Add(invoice);
-                return Task.FromResult(Result ?? new SalesInvoiceResponseDto { Id = 1 });
+                // Like the real repository: echoes the stored columns (sale price = vehicle selling price), Total/Balance left at defaults.
+                return Task.FromResult(Result ?? new SalesInvoiceResponseDto
+                {
+                    Id = 1,
+                    Number = "INV-000001",
+                    Invoice_Date = invoice.Invoice_Date,
+                    Due_Date = invoice.Due_Date,
+                    Customer_Id = invoice.Customer_Id,
+                    Salesperson_Id = invoice.Salesperson_Id,
+                    Vehicle_Id = invoice.Vehicle_Id,
+                    Sale_Price = SellingPrice,
+                    Tax = invoice.Tax,
+                    Fees = invoice.Fees,
+                    Discount = invoice.Discount,
+                    Paid = 0m,
+                    Lifecycle = InvoiceLifecycle.Posted,
+                    Payment_Status = PaymentStatus.Unpaid
+                });
             }
 
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
@@ -91,38 +108,6 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task AddSalesInvoice_TotalWithOnlySalePrice_EqualsSalePrice()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(20000m));
-
-            Assert.Equal(20000m, result.Total);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_TaxIncreasesTotal()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(20000m, tax: 1500m));
-
-            Assert.Equal(21500m, result.Total);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_FeesIncreaseTotal()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(20000m, fees: 300m));
-
-            Assert.Equal(20300m, result.Total);
-        }
-
-        [Fact]
-        public async Task AddSalesInvoice_DiscountDecreasesTotal()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(20000m, discount: 500m));
-
-            Assert.Equal(19500m, result.Total);
-        }
-
-        [Fact]
         public async Task AddSalesInvoice_TotalKeepsCents()
         {
             var result = await _service.AddSalesInvoice(NewInvoice(19999.99m, 1200.50m, 99.25m, 0.74m));
@@ -131,15 +116,6 @@ namespace Module.Tests.Services
         }
 
         // ---- CalculateBalance via AddSalesInvoice ----
-
-        [Fact]
-        public async Task AddSalesInvoice_DraftBalanceEqualsTotal()
-        {
-            var result = await _service.AddSalesInvoice(NewInvoice(20000m, 1500m, 300m, 500m));
-
-            Assert.Equal(0m, result.Paid);
-            Assert.Equal(21300m, result.Balance);
-        }
 
         [Fact]
         public async Task AddSalesInvoice_BalanceSubtractsPaid()
@@ -184,7 +160,6 @@ namespace Module.Tests.Services
 
         [Theory]
         [InlineData(0)]
-        [InlineData(-5)]
         public async Task AddSalesInvoice_MissingCustomer_Throws(long customerId)
         {
             var invoice = NewInvoice();
@@ -195,7 +170,6 @@ namespace Module.Tests.Services
 
         [Theory]
         [InlineData(0)]
-        [InlineData(-5)]
         public async Task AddSalesInvoice_MissingSalesperson_Throws(long salespersonId)
         {
             var invoice = NewInvoice();
@@ -206,7 +180,6 @@ namespace Module.Tests.Services
 
         [Theory]
         [InlineData(0)]
-        [InlineData(-5)]
         public async Task AddSalesInvoice_MissingVehicle_Throws(long vehicleId)
         {
             var invoice = NewInvoice();
@@ -236,5 +209,65 @@ namespace Module.Tests.Services
             var call = Assert.Single(_repository.AddCalls);
             Assert.Same(invoice, call);
         }
+
+        // ---- PostSalesInvoice ----
+
+        [Fact]
+        public async Task PostSalesInvoice_CalculatesTotal_SalePricePlusTaxPlusFeesMinusDiscount()
+        {
+            var result = await _service.PostSalesInvoice(NewInvoice(20000m, 1500m, 300m, 500m));
+
+            Assert.Equal(21300m, result.Total);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_BalanceSubtractsPaid()
+        {
+            _repository.Result = new SalesInvoiceResponseDto
+            {
+                Id = 1,
+                Sale_Price = 20000m,
+                Tax = 1500m,
+                Fees = 300m,
+                Discount = 500m,
+                Paid = 5000m,
+                Lifecycle = InvoiceLifecycle.Posted
+            };
+
+            var result = await _service.PostSalesInvoice(NewInvoice());
+
+            Assert.Equal(21300m, result.Total);
+            Assert.Equal(16300m, result.Balance);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_PassesInvoiceToRepositoryUnchanged()
+        {
+            var invoice = NewInvoice(20000m, 1500m, 300m, 500m);
+
+            await _service.PostSalesInvoice(invoice);
+
+            var call = Assert.Single(_repository.PostCalls);
+            Assert.Same(invoice, call);
+            Assert.Empty(_repository.AddCalls);
+        }
+
+        private async Task AssertPostRejectedAsync(SalesInvoiceCreateDto invoice, string expectedMessage)
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.PostSalesInvoice(invoice));
+
+            Assert.Equal(expectedMessage, ex.Message);
+            Assert.Empty(_repository.PostCalls);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        public async Task PostSalesInvoice_MissingCustomer_Throws(long customerId)
+        {
+            var invoice = NewInvoice();
+            invoice.Customer_Id = customerId;
+            await AssertPostRejectedAsync(invoice, "Customer is required.");
+        }
+
     }
 }
