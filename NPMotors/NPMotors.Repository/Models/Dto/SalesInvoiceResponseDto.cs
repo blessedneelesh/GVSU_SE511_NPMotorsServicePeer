@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using NPMotors.Repository.Models.Enums;
 
 namespace NPMotors.Repository.Models.Dto
 {
@@ -28,6 +29,8 @@ namespace NPMotors.Repository.Models.Dto
         public decimal Paid { get; set; }
         // Calculated (total - paid), read-only.
         public decimal Balance { get; set; }
-        public string Status { get; set; } = string.Empty;
+        public InvoiceLifecycle Lifecycle { get; set; }
+        // Null until the invoice is Posted (Paid / Partial / Unpaid / Overdue).
+        public PaymentStatus? Payment_Status { get; set; }
     }
 }

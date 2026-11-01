@@ -64,10 +64,11 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Discount", invoice.Discount);
             queryParams.Add("ActiveStatus", Status.Active.ToDbValue());
             queryParams.Add("VehicleStatus", VehicleStatus.Available.ToDbValue());
+            queryParams.Add("Lifecycle", InvoiceLifecycle.Draft.ToDbValue());
 
             // The number comes from the id's own sequence ('INV-000001'), so it is unique per invoice.
             // The WHERE re-checks customer/salesperson/vehicle in the same statement as the INSERT.
-            // A Draft starts with paid = 0 and balance = total; the vehicle row is not updated.
+            // A Draft starts with paid = 0, balance = total and no payment status; the vehicle row is not updated.
             var created = await QueryInvoiceAsync(connection,
                 @"WITH new_id AS (SELECT nextval(pg_get_serial_sequence('sales_invoice', 'id')) AS id),
                        ins AS (
@@ -75,19 +76,19 @@ namespace NPMotors.Repository.Repositories
                                                       tax, fees, discount, total, paid, balance, due_date, lifecycle)
                            SELECT n.id, 'INV-' || LPAD(n.id::text, 6, '0'), @InvoiceDate, c.id, e.id, v.id, @SalePrice,
                                   @Tax, @Fees, @Discount, @SalePrice + @Tax + @Fees - @Discount, 0,
-                                  @SalePrice + @Tax + @Fees - @Discount, @DueDate, 'draft'
+                                  @SalePrice + @Tax + @Fees - @Discount, @DueDate, @Lifecycle
                            FROM new_id n, customer c, employee e, vehicle v
                            WHERE c.id = @CustomerId AND LOWER(c.status) = @ActiveStatus
                              AND e.id = @SalespersonId AND LOWER(e.status) = @ActiveStatus AND COALESCE(e.commission, 0) > 0
                              AND v.id = @VehicleId AND LOWER(v.status) = @VehicleStatus
                            RETURNING id, number, date, due_date, customer_id, salesperson_id, vehicle_id, sale_price,
-                                     tax, fees, discount, paid, lifecycle
+                                     tax, fees, discount, paid, lifecycle, payment_status
                        )
                    SELECT ins.id, ins.number, ins.date AS Invoice_Date, ins.due_date AS Due_Date,
                           ins.customer_id AS Customer_Id, ins.salesperson_id AS Salesperson_Id, ins.vehicle_id AS Vehicle_Id,
                           v.vin, v.make, v.model, COALESCE(v.selling_price, 0) AS Selling_Price,
                           COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost, ins.sale_price AS Sale_Price,
-                          ins.tax, ins.fees, ins.discount, ins.paid, INITCAP(ins.lifecycle) AS Status
+                          ins.tax, ins.fees, ins.discount, ins.paid, ins.lifecycle AS Lifecycle, ins.payment_status AS Payment_Status
                    FROM ins JOIN vehicle v ON v.id = ins.vehicle_id",
                 queryParams);
 
