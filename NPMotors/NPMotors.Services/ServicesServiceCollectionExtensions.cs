@@ -17,6 +17,7 @@ namespace NPMotors.Services
             services.AddScoped<IBankAccountService, BankAccountService>();
             services.AddScoped<IVehicleService, VehicleService>();
             services.AddScoped<IPartService, PartService>();
+            services.AddScoped<ISalesInvoiceService, SalesInvoiceService>();
 
             return services;
         }

@@ -149,9 +149,6 @@ CREATE TABLE sales_invoice (
     CONSTRAINT uq_sales_invoice_vehicle UNIQUE (vehicle_id)
 );
 
-ALTER TABLE sales_invoices 
-  RENAME COLUMN status TO payment_status; 
-
 -- Close the VEHICLE <-> SALES_INVOICE loop ("sold through", 0..1 : 0..1)
 ALTER TABLE vehicle
     ADD CONSTRAINT fk_vehicle_invoice
@@ -162,6 +159,9 @@ ALTER TABLE sales_invoice
     ADD CONSTRAINT fk_sales_invoice_vehicle
         FOREIGN KEY (vehicle_id) REFERENCES vehicle (id);
 
+ALTER TABLE sales_invoice
+    ADD CONSTRAINT uq_sales_invoice_number UNIQUE (number);
+
 -- Later changes/ addition of lifecycle_status
 ALTER TABLE sales_invoice
   RENAME COLUMN status TO payment_status; 
@@ -169,6 +169,22 @@ ALTER TABLE sales_invoice
 ALTER TABLE sales_invoice 
   ADD COLUMN lifecycle VARCHAR(20) NOT NULL DEFAULT 'posted' 
   CHECK (lifecycle IN ('draft', 'posted', 'cancelled')); 		
+
+ALTER TABLE sales_invoice
+    ADD COLUMN cancel_reason VARCHAR(500);
+
+ALTER TABLE sales_invoice
+    ADD CONSTRAINT ck_sales_invoice_cancel_reason CHECK (
+        (lifecycle = 'cancelled' AND cancel_reason IS NOT NULL)
+        OR (lifecycle <> 'cancelled' AND cancel_reason IS NULL)
+    );
+
+ALTER TABLE sales_invoice
+    DROP CONSTRAINT uq_sales_invoice_vehicle;
+
+CREATE UNIQUE INDEX uq_sales_invoice_vehicle_active
+    ON sales_invoice (vehicle_id)
+    WHERE lifecycle <> 'cancelled';
 
 -- Created only when a Sales Invoice has an outstanding balance (0..1 per invoice)
 CREATE TABLE ar_invoice (
