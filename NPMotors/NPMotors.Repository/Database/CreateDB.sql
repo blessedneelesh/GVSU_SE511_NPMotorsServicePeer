@@ -149,6 +149,9 @@ CREATE TABLE sales_invoice (
     CONSTRAINT uq_sales_invoice_vehicle UNIQUE (vehicle_id)
 );
 
+ALTER TABLE sales_invoices 
+  RENAME COLUMN status TO payment_status; 
+
 -- Close the VEHICLE <-> SALES_INVOICE loop ("sold through", 0..1 : 0..1)
 ALTER TABLE vehicle
     ADD CONSTRAINT fk_vehicle_invoice
@@ -169,6 +172,15 @@ ALTER TABLE sales_invoice
 ALTER TABLE sales_invoice 
   ADD COLUMN lifecycle VARCHAR(20) NOT NULL DEFAULT 'posted' 
   CHECK (lifecycle IN ('draft', 'posted', 'cancelled')); 		
+
+ALTER TABLE sales_invoice
+    ADD COLUMN cancel_reason VARCHAR(500);
+
+ALTER TABLE sales_invoice
+    ADD CONSTRAINT ck_sales_invoice_cancel_reason CHECK (
+        (lifecycle = 'cancelled' AND cancel_reason IS NOT NULL)
+        OR (lifecycle <> 'cancelled' AND cancel_reason IS NULL)
+    );
 
 -- Created only when a Sales Invoice has an outstanding balance (0..1 per invoice)
 CREATE TABLE ar_invoice (
