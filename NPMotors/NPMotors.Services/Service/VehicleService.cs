@@ -23,8 +23,16 @@ namespace NPMotors.Services.Service
         public async Task<VehicleResponseDto> AddVehicle(VehicleCreateDto vehicle)
         {
             ValidateAmounts(vehicle);
-            if (string.IsNullOrWhiteSpace(vehicle.Vin))
+            var vin = vehicle.Vin?.Trim();
+            if (string.IsNullOrWhiteSpace(vin))
                 throw new ArgumentException("VIN is required.");
+            if (vin.Length != 17)
+                throw new ArgumentException("VIN must be exactly 17 characters.");
+
+            vehicle.Vin = vin;
+
+            if (await _vehicleRepository.VinExists(vin))
+                throw new ArgumentException("A vehicle with this VIN already exists.");
 
             await EnsureVendorIsActive(vehicle.Vendor_Id);
 
