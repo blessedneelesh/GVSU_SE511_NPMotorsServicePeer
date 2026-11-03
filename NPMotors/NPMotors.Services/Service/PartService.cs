@@ -55,6 +55,22 @@ namespace NPMotors.Services.Service
             return created;
         }
 
+        public async Task<PartResponseDto?> UpdatePart(long id, PartUpdateDto part)
+        {
+            if (part.Quantity_Received is null)
+                throw new ArgumentException("Quantity received is required.");
+            if (part.Quantity_Received <= 0)
+                throw new ArgumentException("Quantity received must be greater than zero.");
+
+            var updated = await _partRepository.UpdatePart(id, part);
+            if (updated is null)
+                return null;
+
+            updated.Inventory_Value = CalculateInventoryValue(updated);
+            updated.Is_Low_Stock = IsLowStock(updated);
+            return updated;
+        }
+
         private static decimal CalculateInventoryValue(PartResponseDto part)
         {
             return part.Quantity * part.Cost_Price;

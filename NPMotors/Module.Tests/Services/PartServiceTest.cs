@@ -32,6 +32,9 @@ namespace Module.Tests.Services
                 return Task.FromResult(GetByIdResult);
             }
 
+            public Task<PartResponseDto?> UpdatePart(long id, PartUpdateDto part) =>
+                Task.FromResult<PartResponseDto?>(null);
+
             public Task<PartResponseDto> AddPart(PartCreateDto part)
             {
                 AddCalls.Add(part);
