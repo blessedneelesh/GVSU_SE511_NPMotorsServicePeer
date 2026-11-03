@@ -345,5 +345,98 @@ namespace NPMotors.Repository.Tests.DataAccess
         {
             Assert.Null(await _repository.GetPartById(-1));
         }
+
+        // ---- UpdatePart (receive stock) ----
+
+        private static PartUpdateDto Receive(int quantityReceived) => new() { Quantity_Received = quantityReceived };
+
+        [Fact]
+        public async Task UpdatePart_AddsReceivedAmountToCurrentQuantity()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id, "A", quantity: 10);
+
+            var updated = await _repository.UpdatePart(part.Id, Receive(5));
+
+            Assert.NotNull(updated);
+            Assert.Equal(15, updated!.Quantity);
+            Assert.Equal(15, (await _repository.GetPartById(part.Id))!.Quantity);
+        }
+
+        [Fact]
+        public async Task UpdatePart_ChangesOnlyTheQuantityColumn()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id, "A", "Brake Pad", "Brakes", 10.25m, 15.75m, 10, 4);
+
+            var updated = await _repository.UpdatePart(part.Id, Receive(5));
+
+            Assert.Equal(part.Part_Number, updated!.Part_Number);
+            Assert.Equal("Brake Pad", updated.Name);
+            Assert.Equal("Brakes", updated.Category);
+            Assert.Equal(vendor.Id, updated.Vendor_Id);
+            Assert.Equal(10.25m, updated.Cost_Price);
+            Assert.Equal(15.75m, updated.Sell_Price);
+            Assert.Equal(4, updated.Reorder_Level);
+            Assert.Equal("Main", updated.Warehouse);
+        }
+
+        [Fact]
+        public async Task UpdatePart_CalculatedFieldsAreNotFilled()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id, "A", quantity: 10);
+
+            var updated = await _repository.UpdatePart(part.Id, Receive(5));
+
+            // Inventory_Value and Is_Low_Stock are the service's job.
+            Assert.Equal(0m, updated!.Inventory_Value);
+            Assert.False(updated.Is_Low_Stock);
+        }
+
+        [Fact]
+        public async Task UpdatePart_RepeatedReceipts_Accumulate()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id, "A", quantity: 10);
+
+            await _repository.UpdatePart(part.Id, Receive(5));
+            var updated = await _repository.UpdatePart(part.Id, Receive(7));
+
+            Assert.Equal(22, updated!.Quantity);
+        }
+
+        [Fact]
+        public async Task UpdatePart_ConcurrentReceipts_NoneAreLost()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id, "A", quantity: 10);
+
+            await Task.WhenAll(
+                _repository.UpdatePart(part.Id, Receive(3)),
+                _repository.UpdatePart(part.Id, Receive(3)),
+                _repository.UpdatePart(part.Id, Receive(3)),
+                _repository.UpdatePart(part.Id, Receive(3)));
+
+            Assert.Equal(22, (await _repository.GetPartById(part.Id))!.Quantity);
+        }
+
+        [Fact]
+        public async Task UpdatePart_DoesNotTouchOtherParts()
+        {
+            var vendor = await CreateVendorAsync();
+            var first = await CreatePartAsync(vendor.Id, "A", quantity: 10);
+            var second = await CreatePartAsync(vendor.Id, "B", quantity: 10);
+
+            await _repository.UpdatePart(first.Id, Receive(5));
+
+            Assert.Equal(10, (await _repository.GetPartById(second.Id))!.Quantity);
+        }
+
+        [Fact]
+        public async Task UpdatePart_Unknown_ReturnsNull()
+        {
+            Assert.Null(await _repository.UpdatePart(-1, Receive(5)));
+        }
     }
 }
