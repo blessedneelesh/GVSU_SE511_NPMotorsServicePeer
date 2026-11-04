@@ -24,6 +24,15 @@ namespace NPMotors.Repository.Repositories
         private const string VehicleColumns =
             "id, vendor_id, vin, make, model, year, color, purchase_date, warehouse, purchase_price, additional_costs, total_cost, selling_price, status";
 
+        public async Task<bool> VinExists(string vin)
+        {
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+
+            return await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS (SELECT 1 FROM vehicle WHERE LOWER(vin) = LOWER(@Vin))",
+                new { Vin = vin.Trim() });
+        }
+
         public async Task<VehicleResponseDto> AddVehicle(VehicleCreateDto vehicle)
         {
             using IDbConnection connection = _repositoryContext.GetDatabaseConnection();

@@ -107,6 +107,20 @@ namespace NPMotors.Repository.Repositories
             return created;
         }
 
+        // Adds the received amount to the quantity column in one statement (safe under concurrent receipts);
+        // returns null when the part does not exist.
+        public async Task<PartResponseDto?> UpdatePart(long id, PartUpdateDto part)
+        {
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<PartResponseDto>(
+                $@"UPDATE part
+                   SET quantity = quantity + @QuantityReceived
+                   WHERE id = @Id
+                   RETURNING {PartColumns}",
+                new { Id = id, QuantityReceived = part.Quantity_Received });
+        }
+
         // Called only after the insert was refused, which can only be an unknown or inactive vendor.
         private static async Task<string> GetRejectionReason(IDbConnection connection, long vendorId)
         {

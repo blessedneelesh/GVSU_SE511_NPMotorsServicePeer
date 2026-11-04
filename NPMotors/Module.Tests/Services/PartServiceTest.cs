@@ -32,6 +32,15 @@ namespace Module.Tests.Services
                 return Task.FromResult(GetByIdResult);
             }
 
+            public PartResponseDto? UpdateResult { get; set; }
+            public List<(long Id, PartUpdateDto Part)> UpdateCalls { get; } = new();
+
+            public Task<PartResponseDto?> UpdatePart(long id, PartUpdateDto part)
+            {
+                UpdateCalls.Add((id, part));
+                return Task.FromResult(UpdateResult);
+            }
+
             public Task<PartResponseDto> AddPart(PartCreateDto part)
             {
                 AddCalls.Add(part);
@@ -313,6 +322,95 @@ namespace Module.Tests.Services
 
             Assert.Equal("Reorder level cannot be negative.", ex.Message);
             Assert.Empty(_repository.AddCalls);
+        }
+
+        // ---- UpdatePart (receive stock) ----
+
+        private static PartUpdateDto Receive(int? quantityReceived) => new() { Quantity_Received = quantityReceived };
+
+        [Fact]
+        public async Task UpdatePart_InventoryValue_IsNewQuantityTimesCostPrice()
+        {
+            _repository.UpdateResult = Part(15, 4m, 5);
+
+            var result = await _service.UpdatePart(1, Receive(5));
+
+            Assert.Equal(60m, result!.Inventory_Value);
+        }
+
+        [Theory]
+        [InlineData(5, 5, true)]    // boundary: quantity == reorder level
+        [InlineData(4, 5, true)]
+        [InlineData(6, 5, false)]
+        public async Task UpdatePart_IsLowStock_UsesQuantityAtOrBelowReorderLevel(int quantity, int reorderLevel, bool expected)
+        {
+            _repository.UpdateResult = Part(quantity, 1m, reorderLevel);
+
+            var result = await _service.UpdatePart(1, Receive(1));
+
+            Assert.Equal(expected, result!.Is_Low_Stock);
+        }
+
+        [Fact]
+        public async Task UpdatePart_ReturnsRepositoryPart()
+        {
+            _repository.UpdateResult = Part(15, 4m, 5, id: 9);
+
+            var result = await _service.UpdatePart(9, Receive(5));
+
+            Assert.Same(_repository.UpdateResult, result);
+            Assert.Equal(15, result!.Quantity);
+        }
+
+        [Fact]
+        public async Task UpdatePart_NotFound_ReturnsNull()
+        {
+            _repository.UpdateResult = null;
+
+            Assert.Null(await _service.UpdatePart(99, Receive(5)));
+        }
+
+        [Fact]
+        public async Task UpdatePart_PassesIdAndDtoToRepositoryUnchanged()
+        {
+            _repository.UpdateResult = Part(15, 4m, 5, id: 42);
+            var dto = Receive(5);
+
+            await _service.UpdatePart(42, dto);
+
+            var call = Assert.Single(_repository.UpdateCalls);
+            Assert.Equal(42, call.Id);
+            Assert.Same(dto, call.Part);
+        }
+
+        [Fact]
+        public async Task UpdatePart_MissingQuantityReceived_ThrowsAndSkipsRepository()
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdatePart(1, Receive(null)));
+
+            Assert.Equal("Quantity received is required.", ex.Message);
+            Assert.Empty(_repository.UpdateCalls);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        public async Task UpdatePart_ZeroOrNegativeQuantityReceived_ThrowsAndSkipsRepository(int quantityReceived)
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdatePart(1, Receive(quantityReceived)));
+
+            Assert.Equal("Quantity received must be greater than zero.", ex.Message);
+            Assert.Empty(_repository.UpdateCalls);
+        }
+
+        [Fact]
+        public async Task UpdatePart_QuantityReceivedOfOne_IsAccepted()
+        {
+            _repository.UpdateResult = Part(11, 1m, 5);
+
+            await _service.UpdatePart(1, Receive(1));
+
+            Assert.Single(_repository.UpdateCalls);
         }
     }
 }

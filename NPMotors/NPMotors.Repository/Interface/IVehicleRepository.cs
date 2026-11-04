@@ -9,6 +9,7 @@ namespace NPMotors.Repository.Interface
     public interface IVehicleRepository
     {
         Task<VehicleResponseDto> AddVehicle(VehicleCreateDto vehicle);
+        Task<bool> VinExists(string vin);
         Task<string?> GetVendorStatus(long vendorId);
         Task<bool> DeleteVehicle(long id);
         Task<PagedList<VehicleResponseDto>> GetAllVehicles(VehicleParameters parameters);

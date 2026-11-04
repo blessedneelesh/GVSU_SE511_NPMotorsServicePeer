@@ -9,8 +9,8 @@ namespace NPMotors.Repository.Models.Dto
     {
         [Required]
         public long Vendor_Id { get; set; }
-        [Required, StringLength(17)]
-        public string Vin { get; set; }
+        [Required, StringLength(17, MinimumLength = 17, ErrorMessage = "VIN must be exactly 17 characters.")]
+        public string Vin { get; set; } = string.Empty;
         [StringLength(50)]
         public string? Make { get; set; }
         [StringLength(50)]

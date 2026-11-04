@@ -45,5 +45,18 @@ namespace NPMotors.Peer.Controllers
             }
         }
 
+        [HttpPut]
+        public async Task<IActionResult> UpdatePart([FromQuery] long id, [FromBody] PartUpdateDto part)
+        {
+            try
+            {
+                var updated = await _partService.UpdatePart(id, part);
+                return updated is null ? NotFound() : Ok(updated);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
     }
 }

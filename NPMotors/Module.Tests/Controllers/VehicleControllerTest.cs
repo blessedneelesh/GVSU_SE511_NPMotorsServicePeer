@@ -319,5 +319,32 @@ namespace Module.Tests.Controllers
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
+
+        [Theory]
+        [InlineData("1234567890123456")]
+        [InlineData("123456789012345678")]
+        public async Task AddVehicle_InvalidVinLength_Returns400(string vin)
+        {
+            var vendor = await CreateVendorAsync();
+            var dto = NewDto(vendor.Id);
+            dto.Vin = vin;
+
+            var response = await PostAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task AddVehicle_DuplicateVin_Returns400()
+        {
+            var vendor = await CreateVendorAsync();
+            var dto = NewDto(vendor.Id);
+
+            var firstResponse = await PostAsync(dto);
+            var secondResponse = await PostAsync(dto);
+
+            Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, secondResponse.StatusCode);
+        }
     }
 }

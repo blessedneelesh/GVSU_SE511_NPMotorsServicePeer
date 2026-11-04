@@ -371,15 +371,129 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task UpdateAndDeletePart_AreNotMapped()
+        public async Task DeletePart_IsNotMapped()
         {
             // Act
-            var updateResponse = await _testClient.PutAsync("Part/UpdatePart?id=1", Json(new { }));
             var deleteResponse = await _testClient.DeleteAsync("Part/DeletePart?id=1");
 
             // Assert
-            Assert.Contains(updateResponse.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
             Assert.Contains(deleteResponse.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
+        }
+
+        // ---- UpdatePart (receive stock) ----
+
+        private Task<HttpResponseMessage> ReceiveAsync(string id, object? body) =>
+            _testClient.PutAsync($"Part/UpdatePart?id={id}", Json(body));
+
+        private async Task<int> QuantityOfAsync(long id) => (await _repo.GetPartById(id))!.Quantity;
+
+        [Fact]
+        public async Task UpdatePart_Valid_Returns200WithIncreasedQuantityAndCalculatedFields()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id); // quantity 10, cost 12.50, reorder 5
+
+            var response = await ReceiveAsync(part.Id.ToString(), new { Quantity_Received = 6 });
+            var body = await ReadAsync<PartResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(part.Id, body!.Id);
+            Assert.Equal(16, body.Quantity);
+            Assert.Equal(200m, body.Inventory_Value);   // 16 x 12.50
+            Assert.False(body.Is_Low_Stock);            // 16 > 5
+        }
+
+        [Fact]
+        public async Task UpdatePart_LowStockPartReceivingEnough_IsNoLongerLowStock()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id, "a", p => { p.Quantity = 2; p.Reorder_Level = 5; });
+
+            var response = await ReceiveAsync(part.Id.ToString(), new { Quantity_Received = 4 });
+            var body = await ReadAsync<PartResponseDto>(response);
+
+            Assert.Equal(6, body!.Quantity);
+            Assert.False(body.Is_Low_Stock);            // 6 > 5
+        }
+
+        [Fact]
+        public async Task UpdatePart_TwoReceipts_Accumulate()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id);
+
+            await ReceiveAsync(part.Id.ToString(), new { Quantity_Received = 5 });
+            var response = await ReceiveAsync(part.Id.ToString(), new { Quantity_Received = 7 });
+            var body = await ReadAsync<PartResponseDto>(response);
+
+            Assert.Equal(22, body!.Quantity);
+        }
+
+        [Fact]
+        public async Task UpdatePart_IgnoresOtherFieldsInBody()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id);
+
+            var response = await ReceiveAsync(part.Id.ToString(),
+                new { Quantity_Received = 5, Quantity = 999, Cost_Price = 1, Name = "Changed" });
+            var body = await ReadAsync<PartResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(15, body!.Quantity);
+            Assert.Equal(12.50m, body.Cost_Price);
+            Assert.Equal(part.Name, body.Name);
+        }
+
+        [Fact]
+        public async Task UpdatePart_UnknownId_Returns404()
+        {
+            var response = await ReceiveAsync(long.MaxValue.ToString(), new { Quantity_Received = 5 });
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-3)]
+        public async Task UpdatePart_ZeroOrNegativeQuantityReceived_Returns400AndQuantityUnchanged(int quantityReceived)
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id);
+
+            var response = await ReceiveAsync(part.Id.ToString(), new { Quantity_Received = quantityReceived });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(10, await QuantityOfAsync(part.Id));
+        }
+
+        [Fact]
+        public async Task UpdatePart_MissingQuantityReceived_Returns400AndQuantityUnchanged()
+        {
+            var vendor = await CreateVendorAsync();
+            var part = await CreatePartAsync(vendor.Id);
+
+            var response = await ReceiveAsync(part.Id.ToString(), new { });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(10, await QuantityOfAsync(part.Id));
+        }
+
+        [Fact]
+        public async Task UpdatePart_NonNumericId_Returns400()
+        {
+            var response = await ReceiveAsync("abc", new { Quantity_Received = 5 });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdatePart_NonJsonBody_Returns400()
+        {
+            var response = await _testClient.PutAsync("Part/UpdatePart?id=1",
+                new StringContent("not json", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
     }
 }

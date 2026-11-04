@@ -11,5 +11,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
         Task<PagedList<PartResponseDto>> GetAllParts(PartParameters parameters);
         Task<PartResponseDto?> GetPartById(long id);
         Task<PartResponseDto> AddPart(PartCreateDto part);
+        Task<PartResponseDto?> UpdatePart(long id, PartUpdateDto part);
     }
 }

@@ -18,6 +18,8 @@ namespace Module.Tests.Services
             public List<VehicleParameters> GetAllCalls { get; } = new();
             public List<long> GetByIdCalls { get; } = new();
 
+            public Task<bool> VinExists(string vin) => Task.FromResult(false);
+
             public Task<PagedList<VehicleResponseDto>> GetAllVehicles(VehicleParameters parameters)
             {
                 GetAllCalls.Add(parameters);
