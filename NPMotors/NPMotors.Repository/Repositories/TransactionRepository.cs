@@ -24,9 +24,17 @@ namespace NPMotors.Repository.Repositories
             "t.direction::text AS direction, t.date::timestamp AS date, t.party, t.amount, t.description, " +
             "t.status, t.created_at, t.created_by";
 
+        // Reserves an id from the identity sequence so a transfer can build its reference from it.
+        public async Task<long> GetNextTransactionId(IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteScalarAsync<long>(
+                "SELECT nextval(pg_get_serial_sequence('\"transaction\"', 'id'))", transaction: tx);
+        }
+
         public async Task<long> InsertTransaction(Transaction transaction, IDbTransaction tx)
         {
             var queryParams = new DynamicParameters();
+            queryParams.Add("Id", transaction.Id);
             queryParams.Add("BankAccountId", transaction.BankAccountId);
             queryParams.Add("NumberPrefix", $"TXN-{transaction.CreatedAt.Year}-");
             queryParams.Add("Type", transaction.Type.ToString());
@@ -39,13 +47,15 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Status", transaction.Status.ToDbValue());
             queryParams.Add("CreatedAt", transaction.CreatedAt);
             queryParams.Add("CreatedBy", transaction.CreatedBy);
+            queryParams.Add("TransferReference", transaction.TransferReference);
 
             // The number is built from the row id (TXN-<year>-<id padded to 6>), so the id is
             // taken from the table's identity sequence first and inserted explicitly.
+            // A caller that already reserved an id (Id > 0) gets that id.
             return await tx.Connection!.ExecuteScalarAsync<long>(
-                @"WITH next_id AS (SELECT nextval(pg_get_serial_sequence('""transaction""', 'id')) AS id)
-                  INSERT INTO ""transaction"" (id, bank_account_id, number, type, source_number, direction, date, party, amount, description, status, created_at, created_by)
-                  SELECT n.id, @BankAccountId, @NumberPrefix || LPAD(n.id::text, 6, '0'), @Type, @SourceNumber, @Direction::direction_enum, @Date, @Party, @Amount, @Description, @Status, @CreatedAt, @CreatedBy
+                @"WITH next_id AS (SELECT COALESCE(NULLIF(@Id, 0), nextval(pg_get_serial_sequence('""transaction""', 'id'))) AS id)
+                  INSERT INTO ""transaction"" (id, bank_account_id, number, type, source_number, direction, date, party, amount, description, status, created_at, created_by, transfer_reference)
+                  SELECT n.id, @BankAccountId, @NumberPrefix || LPAD(n.id::text, 6, '0'), @Type, @SourceNumber, @Direction::direction_enum, @Date, @Party, @Amount, @Description, @Status, @CreatedAt, @CreatedBy, @TransferReference
                   FROM next_id n
                   RETURNING id",
                 queryParams, tx);

@@ -55,6 +55,7 @@ namespace NPMotors.Services.Service
 
                 var transaction = new Transaction
                 {
+                    Id = request.TransactionId ?? 0,
                     BankAccountId = request.BankAccountId,
                     Type = request.Type,
                     SourceNumber = request.SourceNumber.Trim(),
@@ -64,6 +65,7 @@ namespace NPMotors.Services.Service
                     Amount = request.Amount,
                     Description = request.Description,
                     Status = request.Status,
+                    TransferReference = request.TransferReference,
                     CreatedAt = DateTime.UtcNow,
                     CreatedBy = CreatedBy
                 };

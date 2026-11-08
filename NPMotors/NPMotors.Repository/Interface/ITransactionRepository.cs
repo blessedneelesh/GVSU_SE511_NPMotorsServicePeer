@@ -7,6 +7,7 @@ namespace NPMotors.Repository.Interface
 {
     public interface ITransactionRepository
     {
+        Task<long> GetNextTransactionId(IDbTransaction tx);
         Task<long> InsertTransaction(Transaction transaction, IDbTransaction tx);
         Task<PagedList<TransactionResponseDto>> GetAllTransactions(TransactionParameters parameters);
         Task<TransactionResponseDto?> GetTransactionById(long id);

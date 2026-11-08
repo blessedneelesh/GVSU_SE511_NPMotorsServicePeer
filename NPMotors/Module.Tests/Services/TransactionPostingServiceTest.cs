@@ -112,6 +112,9 @@ namespace Module.Tests.Services
             public long NextId { get; set; } = 501;
             public List<(Transaction Transaction, IDbTransaction Tx)> InsertCalls { get; } = new();
 
+            public Task<long> GetNextTransactionId(IDbTransaction tx) =>
+                throw new NotSupportedException();
+
             public Task<long> InsertTransaction(Transaction transaction, IDbTransaction tx)
             {
                 _log.Add("insert");

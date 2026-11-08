@@ -15,6 +15,7 @@ namespace NPMotors.Repository.Models
         public decimal Amount { get; set; }
         public string? Description { get; set; }
         public TransactionStatus Status { get; set; }
+        public string? TransferReference { get; set; }
         public DateTime CreatedAt { get; set; }
         public string CreatedBy { get; set; } = string.Empty;
     }

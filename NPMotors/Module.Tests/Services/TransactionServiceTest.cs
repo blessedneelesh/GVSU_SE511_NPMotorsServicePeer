@@ -31,6 +31,9 @@ namespace Module.Tests.Services
                 return Task.FromResult(GetByIdResult);
             }
 
+            public Task<long> GetNextTransactionId(IDbTransaction tx) =>
+                throw new NotSupportedException();
+
             public Task<long> InsertTransaction(Transaction transaction, IDbTransaction tx) =>
                 throw new NotSupportedException();
         }
