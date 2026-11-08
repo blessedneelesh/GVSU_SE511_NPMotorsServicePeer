@@ -289,8 +289,7 @@ ALTER TABLE "transaction"
 -- v3 Story 8: number is the transaction's own number; source_number is the
 --    number of the document that caused it (transfer, receipt, payment, ...).
 ALTER TABLE "transaction"
-    ADD COLUMN source_number VARCHAR(50) NOT NULL,
-    ADD CONSTRAINT uq_transaction_number UNIQUE (number);
+    ADD COLUMN source_number VARCHAR(50) NOT NULL;
 
 -- Vendor or miscellaneous money paid
 CREATE TABLE bank_payment (
