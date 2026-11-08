@@ -1,4 +1,5 @@
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models;
 using NPMotors.Repository.Models.Enums;
 using System;
 using System.Collections.Generic;
@@ -184,6 +185,22 @@ namespace NPMotors.Repository.Repositories
             return await connection.ExecuteScalarAsync<bool>(
                 "SELECT EXISTS (SELECT 1 FROM bank WHERE id = @Id)",
                 new { Id = bankId });
+        }
+
+        // Locks the row until tx ends, so two postings cannot both pass the balance check.
+        public async Task<BankAccount?> GetBankAccountForUpdate(long id, IDbTransaction tx)
+        {
+            return await tx.Connection!.QuerySingleOrDefaultAsync<BankAccount>(
+                @"SELECT id, name, opening_balance AS OpeningBalance, book_balance AS BookBalance, LOWER(status) AS Status
+                  FROM bank_account WHERE id = @Id FOR UPDATE",
+                new { Id = id }, tx);
+        }
+
+        public async Task<int> UpdateBookBalance(long id, decimal bookBalance, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                "UPDATE bank_account SET book_balance = @BookBalance WHERE id = @Id",
+                new { Id = id, BookBalance = bookBalance }, tx);
         }
     }
 }
