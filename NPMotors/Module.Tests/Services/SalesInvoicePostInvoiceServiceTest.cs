@@ -916,5 +916,56 @@ namespace Module.Tests.Services
                 new[] { "get-invoice", "open", "begin", "update-invoice", "mark-sold", "insert-ar", "update-customer-totals", "commit" },
                 _log);
         }
+
+        // ---- Story 18: customer totals update on posting (AC 3) ----
+
+        [Fact]
+        public async Task PostInvoice_UpdatesTotalsOfTheInvoiceCustomerInTheSameTransaction()
+        {
+            await _service.PostInvoice(42, Partial(8000m));
+
+            var call = Assert.Single(_balances.Calls);
+            Assert.Equal(3, call.CustomerId);
+            Assert.Same(_connection.Transaction, call.Tx);
+        }
+
+        [Fact]
+        public async Task PostInvoice_CreditSale_AlsoUpdatesCustomerTotals()
+        {
+            await _service.PostInvoice(42, Request(PaymentCondition.Credit, 0m));
+
+            Assert.Single(_balances.Calls);
+        }
+
+        [Fact]
+        public async Task PostInvoice_CustomerTotalsUpdateFails_RollsBackWithoutCommit()
+        {
+            _balances.Throw = new InvalidOperationException("totals failed");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => _service.PostInvoice(42, Partial()));
+
+            Assert.Equal(1, _connection.Transaction!.Rollbacks);
+            Assert.Equal(0, _connection.Transaction.Commits);
+        }
+
+        [Fact]
+        public async Task PostInvoice_InvoiceNotFound_DoesNotUpdateCustomerTotals()
+        {
+            _invoices.Invoice = null;
+
+            await _service.PostInvoice(999, PaidInFull());
+
+            Assert.Empty(_balances.Calls);
+        }
+
+        [Fact]
+        public async Task PostInvoice_InvoiceNoLongerDraft_DoesNotUpdateCustomerTotals()
+        {
+            _invoices.UpdateRows = 0;
+
+            await Assert.ThrowsAsync<ConflictException>(() => _service.PostInvoice(42, Partial()));
+
+            Assert.Empty(_balances.Calls);
+        }
     }
 }

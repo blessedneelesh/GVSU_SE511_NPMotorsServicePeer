@@ -858,5 +858,56 @@ namespace Module.Tests.Services
             Assert.Empty(_accounts.GetByIdCalls);
             Assert.Empty(_invoices.GetByIdCalls);
         }
+
+        // ---- Story 18: customer totals update on payment (AC 3) ----
+
+        [Fact]
+        public async Task RecordArPayment_UpdatesTotalsOfTheInvoiceCustomerInTheSameTransaction()
+        {
+            await _service.RecordArPayment(7, Request());
+
+            var call = Assert.Single(_balances.Calls);
+            Assert.Equal(3, call.CustomerId);
+            Assert.Same(_connection.Transaction, call.Tx);
+        }
+
+        [Fact]
+        public async Task RecordArPayment_CustomerTotalsUpdateFails_RollsBackWithoutCommit()
+        {
+            _balances.Throw = new InvalidOperationException("totals failed");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => _service.RecordArPayment(7, Request()));
+
+            Assert.Equal(1, _connection.Transaction!.Rollbacks);
+            Assert.Equal(0, _connection.Transaction.Commits);
+        }
+
+        [Fact]
+        public async Task RecordArPayment_ArNotFound_DoesNotUpdateCustomerTotals()
+        {
+            _arInvoices.Ar = null;
+
+            await _service.RecordArPayment(7, Request());
+
+            Assert.Empty(_balances.Calls);
+        }
+
+        [Fact]
+        public async Task RecordArPayment_BalanceChangedByAnotherPayment_DoesNotUpdateCustomerTotals()
+        {
+            _arInvoices.UpdateRows = 0;
+
+            await Assert.ThrowsAsync<ConflictException>(() => _service.RecordArPayment(7, Request()));
+
+            Assert.Empty(_balances.Calls);
+        }
+
+        [Fact]
+        public async Task GetPaymentHistory_DoesNotUpdateCustomerTotals()
+        {
+            await _service.GetPaymentHistory(7);
+
+            Assert.Empty(_balances.Calls);
+        }
     }
 }
