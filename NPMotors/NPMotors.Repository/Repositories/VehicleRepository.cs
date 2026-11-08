@@ -121,6 +121,23 @@ namespace NPMotors.Repository.Repositories
                 new { Id = id });
         }
 
+        // Marks the vehicle Sold and links it to the invoice, only while it is still Available.
+        // 0 rows means it was sold in the meantime.
+        public async Task<int> MarkVehicleSold(long vehicleId, long invoiceId, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                @"UPDATE vehicle SET status = @Sold, invoice_id = @InvoiceId
+                  WHERE id = @VehicleId AND LOWER(status) = @Available",
+                new
+                {
+                    VehicleId = vehicleId,
+                    InvoiceId = invoiceId,
+                    Sold = VehicleStatus.Sold.ToDbValue(),
+                    Available = VehicleStatus.Available.ToDbValue()
+                },
+                tx);
+        }
+
         public async Task<string?> GetVendorStatus(long vendorId)
         {
             using IDbConnection connection = _repositoryContext.GetDatabaseConnection();

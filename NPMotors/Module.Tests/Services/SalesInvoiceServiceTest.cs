@@ -27,6 +27,13 @@ namespace Module.Tests.Services
                 return Task.FromResult(ByIdResult);
             }
 
+            // Story 14 members: not used by these tests (covered by implement-story-test).
+            public Task<NPMotors.Repository.Models.SalesInvoice?> GetInvoiceById(long id) =>
+                throw new NotImplementedException();
+
+            public Task<int> UpdatePostedInvoice(NPMotors.Repository.Models.SalesInvoice invoice, System.Data.IDbTransaction tx) =>
+                throw new NotImplementedException();
+
             public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
             {
                 CancelCalls.Add((id, reason));
@@ -103,7 +110,8 @@ namespace Module.Tests.Services
 
         public SalesInvoiceServiceTest()
         {
-            _service = new SalesInvoiceService(_repository);
+            // Only the sales invoice repository is used by the Story 10-13 methods under test here.
+            _service = new SalesInvoiceService(_repository, null!, null!, null!, null!, null!, null!);
         }
 
         private SalesInvoiceCreateDto NewInvoice(

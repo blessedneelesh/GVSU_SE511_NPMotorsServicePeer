@@ -1,9 +1,11 @@
+using NPMotors.Repository.Exceptions;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Abstractions.ServiceInterfaces;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Text;
 namespace NPMotors.Peer.Controllers
 {
@@ -74,6 +76,24 @@ namespace NPMotors.Peer.Controllers
             catch (ArgumentException ex)
             {
                 return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> PostInvoice([FromQuery] long id, [FromBody] PostInvoiceRequest request)
+        {
+            try
+            {
+                var posted = await _salesInvoiceService.PostInvoice(id, request);
+                return posted is null ? NotFound() : Ok(posted);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
+            catch (ConflictException ex)
+            {
+                return Conflict(new { message = ex.Message });
             }
         }
     }

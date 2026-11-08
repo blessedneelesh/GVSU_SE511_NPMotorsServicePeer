@@ -1,4 +1,6 @@
+using NPMotors.Repository.Exceptions;
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -329,6 +331,45 @@ namespace NPMotors.Repository.Repositories
 
             transaction.Commit();
             return cancelled;
+        }
+
+        // Stored columns only, for posting a Draft (Story 14).
+        public async Task<SalesInvoice?> GetInvoiceById(long id)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<SalesInvoice>(
+                @"SELECT id, number, customer_id AS CustomerId, vehicle_id AS VehicleId, due_date AS DueDate,
+                         COALESCE(total, 0) AS Total, paid, balance, payment_status AS PaymentStatus, lifecycle
+                  FROM sales_invoice WHERE id = @Id",
+                new { Id = id });
+        }
+
+        // Only a Draft can be posted: 0 rows means the invoice was posted or cancelled in the meantime.
+        // The partial unique index on posted invoices rejects a second posted invoice for the same vehicle.
+        public async Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx)
+        {
+            try
+            {
+                return await tx.Connection!.ExecuteAsync(
+                    @"UPDATE sales_invoice
+                      SET lifecycle = @Lifecycle, paid = @Paid, balance = @Balance, payment_status = @PaymentStatus
+                      WHERE id = @Id AND LOWER(lifecycle) = @Draft",
+                    new
+                    {
+                        Id = invoice.Id,
+                        Lifecycle = invoice.Lifecycle,
+                        Paid = invoice.Paid,
+                        Balance = invoice.Balance,
+                        PaymentStatus = invoice.PaymentStatus?.ToDbValue(),
+                        Draft = InvoiceLifecycle.Draft.ToDbValue()
+                    },
+                    tx);
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                throw new ConflictException("The vehicle is already sold.");
+            }
         }
 
         private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)
