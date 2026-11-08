@@ -26,32 +26,23 @@ namespace Module.Tests.Controllers
 
         public async Task DisposeAsync()
         {
+            // Sweep by this run's unique marker (not by tracked ids), so rows a failed test never
+            // tracked, such as a second invoice for the same vehicle, are removed too.
+            // Order follows the foreign keys: invoices, vehicles, vendors, customers, employees.
             using var connection = _repositoryContext.GetDatabaseConnection();
-            foreach (var id in _invoiceIds)
-            {
-                try
-                {
-                    await connection.ExecuteAsync("UPDATE vehicle SET invoice_id = NULL WHERE invoice_id = @Id", new { Id = id });
-                    await connection.ExecuteAsync("DELETE FROM sales_invoice WHERE id = @Id", new { Id = id });
-                }
-                catch { }
-            }
-            foreach (var id in _vehicleIds)
-            {
-                try { await _vehicleRepo.DeleteVehicle(id); } catch { }
-            }
-            foreach (var id in _vendorIds)
-            {
-                try { await _vendorRepo.DeleteVendor(id); } catch { }
-            }
-            foreach (var id in _customerIds)
-            {
-                try { await _customerRepo.DeleteCustomer(id); } catch { }
-            }
-            foreach (var id in _employeeIds)
-            {
-                try { await _employeeRepo.DeleteEmployee(id); } catch { }
-            }
+            var pattern = new { Pattern = _marker + "%", VinPattern = _marker.ToUpperInvariant() + "%" };
+            const string markerVehicles =
+                "SELECT id FROM vehicle WHERE vendor_id IN (SELECT id FROM vendor WHERE name LIKE @Pattern) OR vin LIKE @VinPattern";
+            await connection.ExecuteAsync(
+                $"UPDATE vehicle SET invoice_id = NULL WHERE id IN ({markerVehicles})", pattern);
+            await connection.ExecuteAsync(
+                $@"DELETE FROM sales_invoice
+                   WHERE vehicle_id IN ({markerVehicles})
+                      OR customer_id IN (SELECT id FROM customer WHERE first_name LIKE @Pattern)", pattern);
+            await connection.ExecuteAsync($"DELETE FROM vehicle WHERE id IN ({markerVehicles})", pattern);
+            await connection.ExecuteAsync("DELETE FROM vendor WHERE name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM customer WHERE first_name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM employee WHERE first_name LIKE @Pattern", pattern);
         }
 
         private async Task<long> CreateCustomerAsync(Status status = Status.Active)
@@ -224,12 +215,24 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task AddSalesInvoice_VehicleAlreadyInvoiced_Returns400()
+        public async Task AddSalesInvoice_VehicleAlreadyHasDraft_Returns201ForSecondDraft()
         {
+            // Story 12 AC5: a vehicle can be on several drafts; only one posted invoice is allowed.
             var dto = await ValidDtoAsync();
             await PostAsync(dto);
 
             var response = await PostAsync(dto);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_VehicleAlreadyPosted_Returns400()
+        {
+            var dto = await ValidDtoAsync();
+            await PostInvoiceAsync(dto);
+
+            var response = await PostInvoiceAsync(dto);
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }

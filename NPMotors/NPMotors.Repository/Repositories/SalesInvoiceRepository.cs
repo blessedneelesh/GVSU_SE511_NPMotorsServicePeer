@@ -81,6 +81,8 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("ActiveStatus", Status.Active.ToDbValue());
             queryParams.Add("VehicleStatus", VehicleStatus.Available.ToDbValue());
             queryParams.Add("Lifecycle", InvoiceLifecycle.Draft.ToDbValue());
+            // No user context exists yet, so new invoices are attributed to the system.
+            queryParams.Add("CreatedBy", "system");
 
             // The number comes from the id's own sequence ('INV-000001'), so it is unique per invoice.
             // The WHERE re-checks customer/salesperson/vehicle in the same statement as the INSERT.
@@ -89,10 +91,10 @@ namespace NPMotors.Repository.Repositories
                 @"WITH new_id AS (SELECT nextval(pg_get_serial_sequence('sales_invoice', 'id')) AS id),
                        ins AS (
                            INSERT INTO sales_invoice (id, number, date, customer_id, salesperson_id, vehicle_id, sale_price,
-                                                      tax, fees, discount, total, paid, balance, due_date, lifecycle)
+                                                      tax, fees, discount, total, paid, balance, due_date, lifecycle, created_by)
                            SELECT n.id, 'INV-' || LPAD(n.id::text, 6, '0'), @InvoiceDate, c.id, e.id, v.id, v.selling_price,
                                   @Tax, @Fees, @Discount, v.selling_price + @Tax + @Fees - @Discount, 0,
-                                  v.selling_price + @Tax + @Fees - @Discount, @DueDate, @Lifecycle
+                                  v.selling_price + @Tax + @Fees - @Discount, @DueDate, @Lifecycle, @CreatedBy
                            FROM new_id n, customer c, employee e, vehicle v
                            WHERE c.id = @CustomerId AND LOWER(c.status) = @ActiveStatus
                              AND e.id = @SalespersonId AND LOWER(e.status) = @ActiveStatus AND COALESCE(e.commission, 0) > 0
@@ -133,6 +135,8 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("VehicleStatus", VehicleStatus.Available.ToDbValue());
             queryParams.Add("Lifecycle", InvoiceLifecycle.Posted.ToDbValue());
             queryParams.Add("PaymentStatus", PaymentStatus.Unpaid.ToDbValue());
+            // No user context exists yet, so new invoices are attributed to the system.
+            queryParams.Add("CreatedBy", "system");
 
             // Validate again and insert in one statement; the vehicle row is locked so a concurrent post waits.
             // A Posted invoice starts Unpaid with paid = 0 and balance = total.
@@ -143,10 +147,10 @@ namespace NPMotors.Repository.Repositories
                     @"WITH new_id AS (SELECT nextval(pg_get_serial_sequence('sales_invoice', 'id')) AS id),
                            ins AS (
                                INSERT INTO sales_invoice (id, number, date, customer_id, salesperson_id, vehicle_id, sale_price,
-                                                          tax, fees, discount, total, paid, balance, due_date, lifecycle, payment_status)
+                                                          tax, fees, discount, total, paid, balance, due_date, lifecycle, payment_status, created_by)
                                SELECT n.id, 'INV-' || LPAD(n.id::text, 6, '0'), @InvoiceDate, c.id, e.id, v.id, v.selling_price,
                                       @Tax, @Fees, @Discount, v.selling_price + @Tax + @Fees - @Discount, 0,
-                                      v.selling_price + @Tax + @Fees - @Discount, @DueDate, @Lifecycle, @PaymentStatus
+                                      v.selling_price + @Tax + @Fees - @Discount, @DueDate, @Lifecycle, @PaymentStatus, @CreatedBy
                                FROM new_id n, customer c, employee e, vehicle v
                                WHERE c.id = @CustomerId AND LOWER(c.status) = @ActiveStatus
                                  AND e.id = @SalespersonId AND LOWER(e.status) = @ActiveStatus AND COALESCE(e.commission, 0) > 0

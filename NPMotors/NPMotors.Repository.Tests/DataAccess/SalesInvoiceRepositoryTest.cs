@@ -34,20 +34,23 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         public async Task DisposeAsync()
         {
+            // Sweep by this run's unique marker (not by tracked ids), so rows a failed test never
+            // tracked, such as a second invoice for the same vehicle, are removed too.
+            // Order follows the foreign keys: invoices, vehicles, vendors, customers, employees.
             using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
-            foreach (var id in _invoiceIds)
-            {
-                await connection.ExecuteAsync("UPDATE vehicle SET invoice_id = NULL WHERE invoice_id = @Id", new { Id = id });
-                await connection.ExecuteAsync("DELETE FROM sales_invoice WHERE id = @Id", new { Id = id });
-            }
-            foreach (var id in _vehicleIds)
-                await _vehicleRepository.DeleteVehicle(id);
-            foreach (var id in _vendorIds)
-                await _vendorRepository.DeleteVendor(id);
-            foreach (var id in _customerIds)
-                await _customerRepository.DeleteCustomer(id);
-            foreach (var id in _employeeIds)
-                await _employeeRepository.DeleteEmployee(id);
+            var pattern = new { Pattern = _marker + "%", VinPattern = _marker.ToUpperInvariant() + "%" };
+            const string markerVehicles =
+                "SELECT id FROM vehicle WHERE vendor_id IN (SELECT id FROM vendor WHERE name LIKE @Pattern) OR vin LIKE @VinPattern";
+            await connection.ExecuteAsync(
+                $"UPDATE vehicle SET invoice_id = NULL WHERE id IN ({markerVehicles})", pattern);
+            await connection.ExecuteAsync(
+                $@"DELETE FROM sales_invoice
+                   WHERE vehicle_id IN ({markerVehicles})
+                      OR customer_id IN (SELECT id FROM customer WHERE first_name LIKE @Pattern)", pattern);
+            await connection.ExecuteAsync($"DELETE FROM vehicle WHERE id IN ({markerVehicles})", pattern);
+            await connection.ExecuteAsync("DELETE FROM vendor WHERE name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM customer WHERE first_name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM employee WHERE first_name LIKE @Pattern", pattern);
         }
 
         private async Task<long> CreateCustomerAsync(Status status = Status.Active)
@@ -259,14 +262,15 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task AddSalesInvoice_VehicleAlreadyInvoiced_Throws()
+        public async Task AddSalesInvoice_VehicleAlreadyHasDraft_AllowsSecondDraft()
         {
+            // Story 12 AC5: a vehicle can be on several drafts; only one posted invoice is allowed.
             var dto = await ValidDtoAsync();
-            await AddAsync(dto);
+            var first = await AddAsync(dto);
 
-            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.AddSalesInvoice(dto));
+            var second = await AddAsync(dto);
 
-            Assert.Equal("This vehicle already has a sales invoice.", ex.Message);
+            Assert.NotEqual(first.Id, second.Id);
         }
 
         // ---- PostSalesInvoice ----
@@ -346,16 +350,25 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task PostSalesInvoice_VehicleAlreadyHasDraft_Throws()
+        public async Task PostSalesInvoice_VehicleAlreadyHasDraft_PostsAndMarksVehicleSold()
         {
             var dto = await ValidDtoAsync();
             await AddAsync(dto);
 
-            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
+            var posted = await PostAsync(dto);
 
-            Assert.Equal("This vehicle already has a sales invoice.", ex.Message);
+            Assert.Equal(InvoiceLifecycle.Posted, posted.Lifecycle);
             var vehicle = await _vehicleRepository.GetVehicleById(dto.Vehicle_Id);
-            Assert.Equal(VehicleStatus.Available, vehicle!.Status);
+            Assert.Equal(VehicleStatus.Sold, vehicle!.Status);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_VehicleAlreadyPosted_Throws()
+        {
+            var dto = await ValidDtoAsync();
+            await PostAsync(dto);
+
+            await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
         }
 
         [Theory]

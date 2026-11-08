@@ -50,13 +50,15 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("AdditionalCosts", vehicle.Additional_Costs ?? 0m);
             queryParams.Add("SellingPrice", vehicle.Selling_Price ?? 0m);
             queryParams.Add("Status", VehicleStatus.Available.ToDbValue());
+            // No user context exists yet, so new vehicles are attributed to the system.
+            queryParams.Add("CreatedBy", "system");
 
             // total_cost = purchase_price + additional_costs; a new vehicle is always Available.
             return await connection.QuerySingleAsync<VehicleResponseDto>(
                 $@"INSERT INTO vehicle (vendor_id, vin, make, model, year, color, purchase_date, warehouse,
-                                        purchase_price, additional_costs, total_cost, selling_price, status)
+                                        purchase_price, additional_costs, total_cost, selling_price, status, created_by)
                    VALUES (@VendorId, @Vin, @Make, @Model, @Year, @Color, @PurchaseDate, @Warehouse,
-                           @PurchasePrice, @AdditionalCosts, @PurchasePrice + @AdditionalCosts, @SellingPrice, @Status)
+                           @PurchasePrice, @AdditionalCosts, @PurchasePrice + @AdditionalCosts, @SellingPrice, @Status, @CreatedBy)
                    RETURNING {VehicleColumns}",
                 queryParams);
         }
