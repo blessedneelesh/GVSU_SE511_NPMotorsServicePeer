@@ -20,7 +20,8 @@ namespace Module.Tests.Services
         {
             _transactions = new TransactionRepository(_repositoryContext);
             _service = new TransactionPostingService(
-                _transactions, new BankAccountRepository(_repositoryContext), _repositoryContext);
+                _transactions, new BankAccountRepository(_repositoryContext),
+                new BankStatementLineRepository(_repositoryContext), _repositoryContext);
 
             using var connection = _repositoryContext.GetDatabaseConnection();
             _bankId = await connection.ExecuteScalarAsync<long>(
@@ -35,6 +36,9 @@ namespace Module.Tests.Services
         public async Task DisposeAsync()
         {
             using var connection = _repositoryContext.GetDatabaseConnection();
+            await connection.ExecuteAsync(
+                @"DELETE FROM bank_statement_line WHERE bank_account_id IN (SELECT id FROM bank_account WHERE bank_id = @Id)",
+                new { Id = _bankId });
             await connection.ExecuteAsync(
                 @"DELETE FROM ""transaction"" WHERE bank_account_id IN (SELECT id FROM bank_account WHERE bank_id = @Id)",
                 new { Id = _bankId });

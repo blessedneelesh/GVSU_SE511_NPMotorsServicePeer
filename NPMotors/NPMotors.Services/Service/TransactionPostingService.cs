@@ -12,6 +12,7 @@ namespace NPMotors.Services.Service
     {
         private readonly ITransactionRepository _transactionRepository;
         private readonly IBankAccountRepository _bankAccountRepository;
+        private readonly IBankStatementLineRepository _bankStatementLineRepository;
         private readonly IRepositoryContext _context;
 
         // No user context exists yet, so postings are attributed to the system.
@@ -20,10 +21,12 @@ namespace NPMotors.Services.Service
         public TransactionPostingService(
             ITransactionRepository transactionRepository,
             IBankAccountRepository bankAccountRepository,
+            IBankStatementLineRepository bankStatementLineRepository,
             IRepositoryContext context)
         {
             _transactionRepository = transactionRepository;
             _bankAccountRepository = bankAccountRepository;
+            _bankStatementLineRepository = bankStatementLineRepository;
             _context = context;
         }
 
@@ -71,6 +74,16 @@ namespace NPMotors.Services.Service
                 {
                     var newBalance = ApplyToBookBalance(account!.BookBalance, request.Direction, request.Amount);
                     await _bankAccountRepository.UpdateBookBalance(account.Id, newBalance, tx);
+
+                    // Every posted transaction gets exactly one simulated statement line, saved
+                    // in the same database transaction. The account row is locked, so no other
+                    // posting can read the same previous running balance.
+                    transaction.Id = transactionId;
+                    var line = BuildStatementLine(transaction);
+                    var previousBalance = await _bankStatementLineRepository.GetLastRunningBalance(account.Id, tx);
+                    line.RunningBalance = CalculateRunningBalance(
+                        previousBalance ?? account.OpeningBalance, line.Deposit, line.Withdrawal);
+                    await _bankStatementLineRepository.InsertStatementLine(line, tx);
                 }
 
                 ownTx?.Commit();
@@ -121,6 +134,32 @@ namespace NPMotors.Services.Service
         private static decimal ApplyToBookBalance(decimal bookBalance, Direction direction, decimal amount)
         {
             return direction == Direction.In ? bookBalance + amount : bookBalance - amount;
+        }
+
+        private static BankStatementLine BuildStatementLine(Transaction transaction)
+        {
+            return new BankStatementLine
+            {
+                BankAccountId = transaction.BankAccountId,
+                TransactionId = transaction.Id,
+                PostedDate = transaction.Date,
+                Description = transaction.Description,
+                Party = transaction.Party,
+                Type = transaction.Type,
+                Direction = transaction.Direction,
+                // Incoming sets a deposit and outgoing a withdrawal, never both.
+                Deposit = transaction.Direction == Direction.In ? transaction.Amount : 0m,
+                Withdrawal = transaction.Direction == Direction.Out ? transaction.Amount : 0m,
+                StatementStatus = StatementStatus.Cleared,
+                MatchStatus = MatchStatus.Matched,
+                Source = StatementSource.Simulated,
+                CreatedAt = DateTime.UtcNow
+            };
+        }
+
+        private static decimal CalculateRunningBalance(decimal previousRunningBalance, decimal deposit, decimal withdrawal)
+        {
+            return previousRunningBalance + deposit - withdrawal;
         }
     }
 }

@@ -123,10 +123,37 @@ namespace Module.Tests.Services
             public Task<TransactionResponseDto?> GetTransactionById(long id) => throw new NotSupportedException();
         }
 
+        private class FakeBankStatementLineRepository : IBankStatementLineRepository
+        {
+            private readonly List<string> _log;
+            public FakeBankStatementLineRepository(List<string> log) { _log = log; }
+
+            public decimal? LastRunningBalance { get; set; }
+            public List<(long AccountId, IDbTransaction Tx)> LastBalanceCalls { get; } = new();
+            public List<(BankStatementLine Line, IDbTransaction Tx)> InsertCalls { get; } = new();
+
+            public Task<decimal?> GetLastRunningBalance(long bankAccountId, IDbTransaction tx)
+            {
+                _log.Add("last-balance");
+                LastBalanceCalls.Add((bankAccountId, tx));
+                return Task.FromResult(LastRunningBalance);
+            }
+
+            public Task<long> InsertStatementLine(BankStatementLine line, IDbTransaction tx)
+            {
+                _log.Add("insert-line");
+                InsertCalls.Add((line, tx));
+                return Task.FromResult(900L);
+            }
+
+            public Task<PagedList<StatementLineResponseDto>> GetStatementLines(StatementLineParameters p) => throw new NotSupportedException();
+        }
+
         private readonly FakeDbConnection _connection;
         private readonly FakeRepositoryContext _context;
         private readonly FakeBankAccountRepository _accounts;
         private readonly FakeTransactionRepository _transactions;
+        private readonly FakeBankStatementLineRepository _lines;
         private readonly TransactionPostingService _service;
 
         public TransactionPostingServiceTest()
@@ -138,7 +165,8 @@ namespace Module.Tests.Services
                 Account = new BankAccount { Id = 3, Name = "Operating", BookBalance = 100m, Status = Status.Active }
             };
             _transactions = new FakeTransactionRepository(_log);
-            _service = new TransactionPostingService(_transactions, _accounts, _context);
+            _lines = new FakeBankStatementLineRepository(_log);
+            _service = new TransactionPostingService(_transactions, _accounts, _lines, _context);
         }
 
         private static PostTransactionRequest Request(
@@ -453,7 +481,7 @@ namespace Module.Tests.Services
             await _service.PostTransaction(Request());
 
             Assert.Equal(
-                new[] { "open", "begin", "lock-account", "insert", "update-balance", "commit" },
+                new[] { "open", "begin", "lock-account", "insert", "update-balance", "last-balance", "insert-line", "commit" },
                 _log.ToArray());
         }
 
