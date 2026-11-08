@@ -89,6 +89,8 @@ namespace Module.Tests.Services
                 return Task.FromResult(Invoice);
             }
 
+            public Task<int> UpdateInvoicePayment(SalesInvoice invoice, IDbTransaction tx) => throw new NotSupportedException();
+
             public Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx)
             {
                 _log.Add("update-invoice");
@@ -160,6 +162,9 @@ namespace Module.Tests.Services
             public Exception? Throw { get; set; }
             public List<(ArInvoice Ar, IDbTransaction Tx)> Calls { get; } = new();
 
+            public Task<ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
+            public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx) => throw new NotSupportedException();
+
             public Task<long> InsertArInvoice(ArInvoice arInvoice, IDbTransaction tx)
             {
                 _log.Add("insert-ar");
@@ -177,6 +182,8 @@ namespace Module.Tests.Services
             public long ReturnId { get; set; } = 88;
             public Exception? Throw { get; set; }
             public List<(BankReceipt Receipt, IDbTransaction Tx)> Calls { get; } = new();
+
+            public Task<IEnumerable<BankReceipt>> GetReceiptsByArInvoiceId(long arInvoiceId) => throw new NotSupportedException();
 
             public Task<long> InsertBankReceipt(BankReceipt receipt, IDbTransaction tx)
             {

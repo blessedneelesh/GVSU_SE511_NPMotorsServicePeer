@@ -15,5 +15,8 @@ namespace NPMotors.Repository.Models
         public PaymentStatus Status { get; set; }
         public DateTime CreatedAt { get; set; }
         public string CreatedBy { get; set; } = string.Empty;
+        // Filled only by GetArInvoiceById (JOIN sales_invoice / customer); not stored on ar_invoice.
+        public string InvoiceNumber { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
     }
 }

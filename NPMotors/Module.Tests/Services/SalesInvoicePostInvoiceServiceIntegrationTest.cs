@@ -89,7 +89,7 @@ namespace Module.Tests.Services
             _invoiceRepository = new SalesInvoiceRepository(_repositoryContext);
             _service = new SalesInvoiceService(
                 _invoiceRepository, new VehicleRepository(_repositoryContext), accounts,
-                new ArInvoiceRepository(), new BankReceiptRepository(), posting, _repositoryContext);
+                new ArInvoiceRepository(_repositoryContext), new BankReceiptRepository(_repositoryContext), posting, _repositoryContext);
 
             using var connection = _repositoryContext.GetDatabaseConnection();
             _bankId = await connection.ExecuteScalarAsync<long>(

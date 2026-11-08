@@ -8,6 +8,13 @@ namespace NPMotors.Repository.Repositories
 {
     public class ArInvoiceRepository : IArInvoiceRepository
     {
+        private readonly IRepositoryContext _context;
+
+        public ArInvoiceRepository(IRepositoryContext context)
+        {
+            _context = context;
+        }
+
         public async Task<long> InsertArInvoice(ArInvoice arInvoice, IDbTransaction tx)
         {
             var queryParams = new DynamicParameters();
@@ -30,6 +37,40 @@ namespace NPMotors.Repository.Repositories
                   FROM next_id n
                   RETURNING id",
                 queryParams, tx);
+        }
+
+        // Stored columns plus the invoice number and customer name from the JOINs.
+        public async Task<ArInvoice?> GetArInvoiceById(long id)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<ArInvoice>(
+                @"SELECT ar.id, ar.invoice_id AS InvoiceId, ar.number, ar.date, ar.due_date AS DueDate,
+                         ar.amount, ar.paid, ar.balance, ar.status, ar.created_at AS CreatedAt, ar.created_by AS CreatedBy,
+                         si.number AS InvoiceNumber, CONCAT_WS(' ', c.first_name, c.last_name) AS CustomerName
+                  FROM ar_invoice ar
+                  JOIN sales_invoice si ON si.id = ar.invoice_id
+                  JOIN customer c ON c.id = si.customer_id
+                  WHERE ar.id = @Id",
+                new { Id = id });
+        }
+
+        // Optimistic check: 0 rows means another payment changed the AR balance first.
+        public async Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                @"UPDATE ar_invoice
+                  SET paid = @Paid, balance = @Balance, status = @Status
+                  WHERE id = @Id AND balance = @ExpectedBalance",
+                new
+                {
+                    Id = ar.Id,
+                    Paid = ar.Paid,
+                    Balance = ar.Balance,
+                    Status = ar.Status.ToDbValue(),
+                    ExpectedBalance = expectedBalance
+                },
+                tx);
         }
     }
 }

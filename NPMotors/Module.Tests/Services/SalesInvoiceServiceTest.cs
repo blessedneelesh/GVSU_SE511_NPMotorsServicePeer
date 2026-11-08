@@ -31,6 +31,9 @@ namespace Module.Tests.Services
             public Task<NPMotors.Repository.Models.SalesInvoice?> GetInvoiceById(long id) =>
                 throw new NotImplementedException();
 
+            public Task<int> UpdateInvoicePayment(NPMotors.Repository.Models.SalesInvoice invoice, System.Data.IDbTransaction tx) =>
+                throw new NotImplementedException();
+
             public Task<int> UpdatePostedInvoice(NPMotors.Repository.Models.SalesInvoice invoice, System.Data.IDbTransaction tx) =>
                 throw new NotImplementedException();
 

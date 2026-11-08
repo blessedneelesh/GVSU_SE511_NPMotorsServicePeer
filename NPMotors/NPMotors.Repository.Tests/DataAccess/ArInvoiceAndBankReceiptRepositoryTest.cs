@@ -12,11 +12,17 @@ namespace NPMotors.Repository.Tests.DataAccess
     // only the draft invoice (needed for the foreign keys) is removed by the marker sweep.
     public class ArInvoiceAndBankReceiptRepositoryTest : TestBase, IAsyncLifetime
     {
-        private readonly ArInvoiceRepository _arRepository = new();
-        private readonly BankReceiptRepository _receiptRepository = new();
+        private readonly ArInvoiceRepository _arRepository;
+        private readonly BankReceiptRepository _receiptRepository;
         private readonly string _marker = $"itest-{Guid.NewGuid():N}".Substring(0, 12);
         private long _customerId;
         private long _invoiceId;
+
+        public ArInvoiceAndBankReceiptRepositoryTest()
+        {
+            _arRepository = new ArInvoiceRepository(_repositoryContext);
+            _receiptRepository = new BankReceiptRepository(_repositoryContext);
+        }
 
         private class ArRow
         {

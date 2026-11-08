@@ -372,6 +372,24 @@ namespace NPMotors.Repository.Repositories
             }
         }
 
+        // Later payment (Story 15): only a Posted invoice takes payments; 0 rows means it changed in the meantime.
+        public async Task<int> UpdateInvoicePayment(SalesInvoice invoice, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                @"UPDATE sales_invoice
+                  SET paid = @Paid, balance = @Balance, payment_status = @PaymentStatus
+                  WHERE id = @Id AND LOWER(lifecycle) = @Posted",
+                new
+                {
+                    Id = invoice.Id,
+                    Paid = invoice.Paid,
+                    Balance = invoice.Balance,
+                    PaymentStatus = invoice.PaymentStatus?.ToDbValue(),
+                    Posted = InvoiceLifecycle.Posted.ToDbValue()
+                },
+                tx);
+        }
+
         private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)
         {
             try

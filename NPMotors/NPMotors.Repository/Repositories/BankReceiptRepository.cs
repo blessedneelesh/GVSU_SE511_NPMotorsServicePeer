@@ -7,6 +7,13 @@ namespace NPMotors.Repository.Repositories
 {
     public class BankReceiptRepository : IBankReceiptRepository
     {
+        private readonly IRepositoryContext _context;
+
+        public BankReceiptRepository(IRepositoryContext context)
+        {
+            _context = context;
+        }
+
         public async Task<long> InsertBankReceipt(BankReceipt receipt, IDbTransaction tx)
         {
             var queryParams = new DynamicParameters();
@@ -34,6 +41,24 @@ namespace NPMotors.Repository.Repositories
                   FROM next_id n
                   RETURNING id",
                 queryParams, tx);
+        }
+
+        // Oldest first; receipts are only ever inserted, so this is the full payment history.
+        public async Task<IEnumerable<BankReceipt>> GetReceiptsByArInvoiceId(long arInvoiceId)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QueryAsync<BankReceipt>(
+                @"SELECT br.id, br.transaction_id AS TransactionId, br.bank_account_id AS BankAccountId,
+                         br.customer_id AS CustomerId, br.sales_invoice_id AS SalesInvoiceId, br.ar_invoice_id AS ArInvoiceId,
+                         br.receipt_number AS ReceiptNumber, br.receipt_date AS ReceiptDate, br.payment_method AS PaymentMethod,
+                         br.reference, br.amount, br.status, br.created_at AS CreatedAt, br.created_by AS CreatedBy,
+                         ba.name AS BankAccountName
+                  FROM bank_receipt br
+                  JOIN bank_account ba ON ba.id = br.bank_account_id
+                  WHERE br.ar_invoice_id = @ArInvoiceId
+                  ORDER BY br.receipt_date, br.id",
+                new { ArInvoiceId = arInvoiceId });
         }
     }
 }

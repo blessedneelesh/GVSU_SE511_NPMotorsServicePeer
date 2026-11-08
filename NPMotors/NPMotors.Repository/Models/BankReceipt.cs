@@ -19,5 +19,7 @@ namespace NPMotors.Repository.Models
         public string Status { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
         public string CreatedBy { get; set; } = string.Empty;
+        // Filled only by GetReceiptsByArInvoiceId (JOIN bank_account); not stored on bank_receipt.
+        public string BankAccountName { get; set; } = string.Empty;
     }
 }
