@@ -36,5 +36,8 @@ namespace NPMotors.Repository.Models.Dto
         public PaymentStatus? Payment_Status { get; set; }
         // Set when the invoice is Cancelled (Story 9).
         public string? Cancel_Reason { get; set; }
+        // Set by Story 14 when posting leaves a balance / money is received.
+        public long? Ar_Invoice_Id { get; set; }
+        public long? Bank_Receipt_Id { get; set; }
     }
 }

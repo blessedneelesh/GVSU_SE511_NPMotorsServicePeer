@@ -13,5 +13,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
         Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters);
         Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id);
         Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason);
+        Task<SalesInvoiceResponseDto?> PostInvoice(long id, PostInvoiceRequest request);
     }
 }

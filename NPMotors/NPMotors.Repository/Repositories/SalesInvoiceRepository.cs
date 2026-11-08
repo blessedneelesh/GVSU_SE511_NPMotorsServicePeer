@@ -1,4 +1,6 @@
+using NPMotors.Repository.Exceptions;
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -283,52 +285,95 @@ namespace NPMotors.Repository.Repositories
             public decimal Paid { get; set; }
         }
 
-        // One transaction: lock and check the invoice, mark it Cancelled with the reason, return the vehicle to inventory.
+        // Runs inside the caller's transaction (the service commits or rolls back): lock and check the invoice,
+        // mark it Cancelled with the reason, return the vehicle to inventory.
         // A missing invoice throws KeyNotFoundException (404); a rule violation throws ArgumentException (400).
-        public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+        public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, IDbTransaction tx)
         {
-            using IDbConnection connection = _context.GetDatabaseConnection();
-            if (connection.State != ConnectionState.Open)
-                connection.Open();
-            using IDbTransaction transaction = connection.BeginTransaction();
+            var connection = tx.Connection!;
 
             var current = await connection.QuerySingleOrDefaultAsync<CancelState>(
                 "SELECT LOWER(lifecycle) AS Lifecycle, paid AS Paid FROM sales_invoice WHERE id = @Id FOR UPDATE",
-                new { Id = id }, transaction);
+                new { Id = id }, tx);
 
             if (current is null)
-            {
-                transaction.Rollback();
                 throw new KeyNotFoundException("The invoice does not exist.");
-            }
             if (current.Lifecycle != InvoiceLifecycle.Posted.ToDbValue())
-            {
-                transaction.Rollback();
                 throw new ArgumentException("Only Posted invoices can be cancelled.");
-            }
             if (current.Paid != 0)
-            {
-                transaction.Rollback();
                 throw new ArgumentException("An invoice with payments cannot be cancelled.");
-            }
 
             // The invoice keeps its vehicle_id as history; only the vehicle is released (matched through invoice_id).
             await connection.ExecuteAsync(
                 "UPDATE vehicle SET status = @Available, invoice_id = NULL WHERE invoice_id = @Id",
                 new { Id = id, Available = VehicleStatus.Available.ToDbValue() },
-                transaction);
+                tx);
 
             await connection.ExecuteAsync(
                 "UPDATE sales_invoice SET lifecycle = @Cancelled, cancel_reason = @Reason WHERE id = @Id",
                 new { Id = id, Cancelled = InvoiceLifecycle.Cancelled.ToDbValue(), Reason = reason.Reason },
-                transaction);
+                tx);
 
-            var cancelled = await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
+            return await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
                 $"SELECT {BrowseColumns} {BrowseFrom} WHERE si.id = @Id",
-                new { Id = id }, transaction);
+                new { Id = id }, tx);
+        }
 
-            transaction.Commit();
-            return cancelled;
+        // Stored columns only, for posting a Draft (Story 14).
+        public async Task<SalesInvoice?> GetInvoiceById(long id)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<SalesInvoice>(
+                @"SELECT id, number, customer_id AS CustomerId, vehicle_id AS VehicleId, due_date AS DueDate,
+                         COALESCE(total, 0) AS Total, paid, balance, payment_status AS PaymentStatus, lifecycle
+                  FROM sales_invoice WHERE id = @Id",
+                new { Id = id });
+        }
+
+        // Only a Draft can be posted: 0 rows means the invoice was posted or cancelled in the meantime.
+        // The partial unique index on posted invoices rejects a second posted invoice for the same vehicle.
+        public async Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx)
+        {
+            try
+            {
+                return await tx.Connection!.ExecuteAsync(
+                    @"UPDATE sales_invoice
+                      SET lifecycle = @Lifecycle, paid = @Paid, balance = @Balance, payment_status = @PaymentStatus
+                      WHERE id = @Id AND LOWER(lifecycle) = @Draft",
+                    new
+                    {
+                        Id = invoice.Id,
+                        Lifecycle = invoice.Lifecycle,
+                        Paid = invoice.Paid,
+                        Balance = invoice.Balance,
+                        PaymentStatus = invoice.PaymentStatus?.ToDbValue(),
+                        Draft = InvoiceLifecycle.Draft.ToDbValue()
+                    },
+                    tx);
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                throw new ConflictException("The vehicle is already sold.");
+            }
+        }
+
+        // Later payment (Story 15): only a Posted invoice takes payments; 0 rows means it changed in the meantime.
+        public async Task<int> UpdateInvoicePayment(SalesInvoice invoice, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                @"UPDATE sales_invoice
+                  SET paid = @Paid, balance = @Balance, payment_status = @PaymentStatus
+                  WHERE id = @Id AND LOWER(lifecycle) = @Posted",
+                new
+                {
+                    Id = invoice.Id,
+                    Paid = invoice.Paid,
+                    Balance = invoice.Balance,
+                    PaymentStatus = invoice.PaymentStatus?.ToDbValue(),
+                    Posted = InvoiceLifecycle.Posted.ToDbValue()
+                },
+                tx);
         }
 
         private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)

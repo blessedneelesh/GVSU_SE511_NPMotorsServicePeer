@@ -26,6 +26,10 @@ namespace Module.Tests.Services
                 return Task.FromResult(GetAllResult);
             }
 
+            // Story 14 member: not used by these tests (covered by implement-story-test).
+            public Task<int> MarkVehicleSold(long vehicleId, long invoiceId, System.Data.IDbTransaction tx) =>
+                throw new NotImplementedException();
+
             public Task<VehicleResponseDto?> GetVehicleById(long id)
             {
                 GetByIdCalls.Add(id);

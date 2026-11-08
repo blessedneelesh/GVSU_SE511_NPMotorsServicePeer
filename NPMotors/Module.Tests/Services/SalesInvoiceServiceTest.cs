@@ -16,6 +16,7 @@ namespace Module.Tests.Services
             public SalesInvoiceResponseDto? ByIdResult { get; set; }
             public SalesInvoiceResponseDto? CancelResult { get; set; }
             public List<(long Id, SalesInvoiceCancelDto Reason)> CancelCalls { get; } = new();
+            public Exception? CancelThrow { get; set; }
 
             public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters)
             {
@@ -27,9 +28,21 @@ namespace Module.Tests.Services
                 return Task.FromResult(ByIdResult);
             }
 
-            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+            // Story 14 members: not used by these tests (covered by implement-story-test).
+            public Task<NPMotors.Repository.Models.SalesInvoice?> GetInvoiceById(long id) =>
+                throw new NotImplementedException();
+
+            public Task<int> UpdateInvoicePayment(NPMotors.Repository.Models.SalesInvoice invoice, System.Data.IDbTransaction tx) =>
+                throw new NotImplementedException();
+
+            public Task<int> UpdatePostedInvoice(NPMotors.Repository.Models.SalesInvoice invoice, System.Data.IDbTransaction tx) =>
+                throw new NotImplementedException();
+
+            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, System.Data.IDbTransaction tx)
             {
                 CancelCalls.Add((id, reason));
+                if (CancelThrow is not null)
+                    throw CancelThrow;
                 // Like the real repository: stored columns only, Total/Balance left at their defaults.
                 return Task.FromResult(CancelResult ?? new SalesInvoiceResponseDto
                 {
@@ -98,12 +111,65 @@ namespace Module.Tests.Services
             }
         }
 
+        private class FakeTx : System.Data.IDbTransaction
+        {
+            public FakeTx(System.Data.IDbConnection connection) { Connection = connection; }
+            public System.Data.IDbConnection? Connection { get; }
+            public System.Data.IsolationLevel IsolationLevel => System.Data.IsolationLevel.ReadCommitted;
+            public int Commits { get; private set; }
+            public int Rollbacks { get; private set; }
+            public void Commit() => Commits++;
+            public void Rollback() => Rollbacks++;
+            public void Dispose() { }
+        }
+
+        private class FakeConnection : System.Data.IDbConnection, NPMotors.Repository.Interface.IRepositoryContext
+        {
+            public string ConnectionString { get; set; } = "";
+            public int ConnectionTimeout => 0;
+            public string Database => "fake";
+            public System.Data.ConnectionState State { get; private set; } = System.Data.ConnectionState.Closed;
+            public FakeTx? Tx { get; private set; }
+            public void Open() => State = System.Data.ConnectionState.Open;
+            public void Close() => State = System.Data.ConnectionState.Closed;
+            public void Dispose() { }
+            public System.Data.IDbTransaction BeginTransaction() => Tx = new FakeTx(this);
+            public System.Data.IDbTransaction BeginTransaction(System.Data.IsolationLevel il) => BeginTransaction();
+            public void ChangeDatabase(string databaseName) { }
+            public System.Data.IDbCommand CreateCommand() => throw new NotSupportedException();
+            public System.Data.IDbConnection GetDatabaseConnection() => this;
+        }
+
+        private class FakeArInvoiceRepository : NPMotors.Repository.Interface.IArInvoiceRepository
+        {
+            public List<long> CloseCalls { get; } = new();
+            public Exception? Throw { get; set; }
+
+            public Task<int> CloseArInvoice(long invoiceId, System.Data.IDbTransaction tx)
+            {
+                CloseCalls.Add(invoiceId);
+                if (Throw is not null)
+                    throw Throw;
+                return Task.FromResult(1);
+            }
+
+            public Task<long> InsertArInvoice(NPMotors.Repository.Models.ArInvoice arInvoice, System.Data.IDbTransaction tx) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.Models.ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
+            public Task<int> UpdateArPayment(NPMotors.Repository.Models.ArInvoice ar, decimal expectedBalance, System.Data.IDbTransaction tx) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetArAging(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
+        }
+
         private readonly FakeSalesInvoiceRepository _repository = new();
+        private readonly FakeArInvoiceRepository _arInvoices = new();
+        private readonly FakeCustomerBalanceService _balances = new();
+        private readonly FakeConnection _connection = new();
         private readonly SalesInvoiceService _service;
 
         public SalesInvoiceServiceTest()
         {
-            _service = new SalesInvoiceService(_repository);
+            // The Story 10-13 methods use the sales invoice repository; cancel also uses the AR repository,
+            // the transaction and the customer balance service (Story 18).
+            _service = new SalesInvoiceService(_repository, null!, null!, _arInvoices, null!, null!, _connection, _balances);
         }
 
         private SalesInvoiceCreateDto NewInvoice(
@@ -436,5 +502,99 @@ namespace Module.Tests.Services
             Assert.Empty(_repository.CancelCalls);
         }
 
+
+        // ---- Story 18: cancellation closes the AR and updates customer totals (AC 3) ----
+
+        private void ReturnCancelledInvoiceOfCustomer(long customerId) =>
+            _repository.CancelResult = new SalesInvoiceResponseDto
+            {
+                Id = 7, Customer_Id = customerId, Sale_Price = 20000m, Tax = 1500m, Fees = 300m, Discount = 500m,
+                Paid = 0m, Lifecycle = InvoiceLifecycle.Cancelled, Cancel_Reason = "Wrong customer"
+            };
+
+        [Fact]
+        public async Task CancelSalesInvoice_ClosesTheArInvoiceOfThatSalesInvoice()
+        {
+            ReturnCancelledInvoiceOfCustomer(9);
+
+            await _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" });
+
+            Assert.Equal(7, Assert.Single(_arInvoices.CloseCalls));
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_UpdatesTotalsOfTheInvoiceCustomerInTheSameTransaction()
+        {
+            ReturnCancelledInvoiceOfCustomer(9);
+
+            await _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" });
+
+            var call = Assert.Single(_balances.Calls);
+            Assert.Equal(9, call.CustomerId);
+            Assert.Same(_connection.Tx, call.Tx);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_RunsInOneTransactionAndCommitsOnce()
+        {
+            ReturnCancelledInvoiceOfCustomer(9);
+
+            await _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" });
+
+            Assert.Equal(1, _connection.Tx!.Commits);
+            Assert.Equal(0, _connection.Tx.Rollbacks);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_RepositoryThrows_RollsBackAndDoesNotCloseArOrUpdateTotals()
+        {
+            _repository.CancelThrow = new ArgumentException("Only Posted invoices can be cancelled.");
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" }));
+
+            Assert.Equal(1, _connection.Tx!.Rollbacks);
+            Assert.Equal(0, _connection.Tx.Commits);
+            Assert.Empty(_arInvoices.CloseCalls);
+            Assert.Empty(_balances.Calls);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_ArCloseFails_RollsBackWithoutUpdatingTotals()
+        {
+            ReturnCancelledInvoiceOfCustomer(9);
+            _arInvoices.Throw = new InvalidOperationException("ar failed");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" }));
+
+            Assert.Equal(1, _connection.Tx!.Rollbacks);
+            Assert.Equal(0, _connection.Tx.Commits);
+            Assert.Empty(_balances.Calls);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_CustomerTotalsUpdateFails_RollsBackWithoutCommit()
+        {
+            ReturnCancelledInvoiceOfCustomer(9);
+            _balances.Throw = new InvalidOperationException("totals failed");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = "Wrong customer" }));
+
+            Assert.Equal(1, _connection.Tx!.Rollbacks);
+            Assert.Equal(0, _connection.Tx.Commits);
+        }
+
+        [Fact]
+        public async Task CancelSalesInvoice_BlankReason_DoesNotOpenATransactionOrUpdateTotals()
+        {
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CancelSalesInvoice(7, new SalesInvoiceCancelDto { Reason = " " }));
+
+            Assert.Null(_connection.Tx);
+            Assert.Empty(_arInvoices.CloseCalls);
+            Assert.Empty(_balances.Calls);
+        }
     }
 }
