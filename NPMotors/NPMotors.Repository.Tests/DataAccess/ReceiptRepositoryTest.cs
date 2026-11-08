@@ -352,7 +352,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task UpdateInvoicePayment_CancelledInvoice_UpdatesNothing()
         {
             var posted = await PostInvoiceAsync();
-            await _invoiceRepository.CancelSalesInvoice(posted.Id, new SalesInvoiceCancelDto { Reason = "test" });
+            await _invoiceRepository.CancelCommittedAsync(posted.Id, new SalesInvoiceCancelDto { Reason = "test" });
             var (connection, tx) = Begin();
             using (connection) using (tx)
             {

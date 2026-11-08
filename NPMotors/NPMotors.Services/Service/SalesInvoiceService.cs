@@ -22,6 +22,7 @@ namespace NPMotors.Services.Service
         private readonly IBankReceiptRepository _bankReceiptRepository;
         private readonly ITransactionPostingService _transactionPostingService;
         private readonly IRepositoryContext _context;
+        private readonly ICustomerBalanceService _customerBalanceService;
 
         // No user context exists yet, so new records are attributed to the system.
         private const string CreatedBy = "system";
@@ -35,7 +36,8 @@ namespace NPMotors.Services.Service
             IArInvoiceRepository arInvoiceRepository,
             IBankReceiptRepository bankReceiptRepository,
             ITransactionPostingService transactionPostingService,
-            IRepositoryContext context)
+            IRepositoryContext context,
+            ICustomerBalanceService customerBalanceService)
         {
             _salesInvoiceRepository = salesInvoiceRepository;
             _vehicleRepository = vehicleRepository;
@@ -44,6 +46,7 @@ namespace NPMotors.Services.Service
             _bankReceiptRepository = bankReceiptRepository;
             _transactionPostingService = transactionPostingService;
             _context = context;
+            _customerBalanceService = customerBalanceService;
         }
 
         public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
@@ -96,7 +99,28 @@ namespace NPMotors.Services.Service
             if (text.Length > 500)
                 throw new ArgumentException("The cancellation reason cannot exceed 500 characters.");
 
-            var cancelled = await _salesInvoiceRepository.CancelSalesInvoice(id, new SalesInvoiceCancelDto { Reason = text });
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            SalesInvoiceResponseDto cancelled;
+            try
+            {
+                cancelled = await _salesInvoiceRepository.CancelSalesInvoice(id, new SalesInvoiceCancelDto { Reason = text }, tx);
+
+                // A cancelled credit sale must leave no open AR, so the customer balance drops with it.
+                await _arInvoiceRepository.CloseArInvoice(id, tx);
+                await _customerBalanceService.UpdateCustomerTotals(cancelled.Customer_Id, tx);
+
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+
             cancelled.Total = CalculateTotal(cancelled.Sale_Price, cancelled.Tax, cancelled.Fees, cancelled.Discount);
             cancelled.Balance = CalculateBalance(cancelled.Total, cancelled.Paid);
             return cancelled;
@@ -177,6 +201,8 @@ namespace NPMotors.Services.Service
                         CreatedBy = CreatedBy
                     }, tx);
                 }
+
+                await _customerBalanceService.UpdateCustomerTotals(invoice.CustomerId, tx);
 
                 tx.Commit();
 

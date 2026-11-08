@@ -17,6 +17,7 @@ namespace NPMotors.Services.Service
         private readonly IBankReceiptRepository _bankReceiptRepository;
         private readonly ITransactionPostingService _transactionPostingService;
         private readonly IRepositoryContext _context;
+        private readonly ICustomerBalanceService _customerBalanceService;
 
         // No user context exists yet, so new records are attributed to the system.
         private const string CreatedBy = "system";
@@ -29,7 +30,8 @@ namespace NPMotors.Services.Service
             IBankAccountRepository bankAccountRepository,
             IBankReceiptRepository bankReceiptRepository,
             ITransactionPostingService transactionPostingService,
-            IRepositoryContext context)
+            IRepositoryContext context,
+            ICustomerBalanceService customerBalanceService)
         {
             _arInvoiceRepository = arInvoiceRepository;
             _salesInvoiceRepository = salesInvoiceRepository;
@@ -37,6 +39,7 @@ namespace NPMotors.Services.Service
             _bankReceiptRepository = bankReceiptRepository;
             _transactionPostingService = transactionPostingService;
             _context = context;
+            _customerBalanceService = customerBalanceService;
         }
 
         // Validate everything first (nothing saved), then save the AR invoice, sales invoice, transaction,
@@ -101,6 +104,8 @@ namespace NPMotors.Services.Service
                     CreatedAt = DateTime.UtcNow,
                     CreatedBy = CreatedBy
                 }, tx);
+
+                await _customerBalanceService.UpdateCustomerTotals(invoice.CustomerId, tx);
 
                 tx.Commit();
             }

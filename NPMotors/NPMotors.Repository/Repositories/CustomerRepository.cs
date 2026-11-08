@@ -136,5 +136,38 @@ namespace NPMotors.Repository.Repositories
 
             return rowsAffected > 0;
         }
+
+        // Open AR only (balance > 0), read inside the caller's transaction.
+        public async Task<IEnumerable<decimal>> GetOpenArBalances(long customerId, IDbTransaction tx)
+        {
+            return await tx.Connection!.QueryAsync<decimal>(
+                @"SELECT ar.balance
+                  FROM ar_invoice ar
+                  JOIN sales_invoice si ON si.id = ar.invoice_id
+                  WHERE si.customer_id = @CustomerId AND ar.balance > 0",
+                new { CustomerId = customerId },
+                tx);
+        }
+
+        // Posted only: Draft and Cancelled invoices are excluded.
+        public async Task<IEnumerable<decimal>> GetPostedInvoiceTotals(long customerId, IDbTransaction tx)
+        {
+            return await tx.Connection!.QueryAsync<decimal>(
+                @"SELECT COALESCE(total, 0)
+                  FROM sales_invoice
+                  WHERE customer_id = @CustomerId AND LOWER(lifecycle) = @Posted",
+                new { CustomerId = customerId, Posted = InvoiceLifecycle.Posted.ToDbValue() },
+                tx);
+        }
+
+        public async Task<int> UpdateCustomerTotals(long customerId, decimal balance, decimal totalPurchases, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                @"UPDATE customer
+                  SET balance = @Balance, total_purchases = @TotalPurchases
+                  WHERE id = @CustomerId",
+                new { CustomerId = customerId, Balance = balance, TotalPurchases = totalPurchases },
+                tx);
+        }
     }
 }

@@ -37,7 +37,7 @@ namespace Module.Tests.Services
             public Task<int> UpdatePostedInvoice(NPMotors.Repository.Models.SalesInvoice invoice, System.Data.IDbTransaction tx) =>
                 throw new NotImplementedException();
 
-            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, System.Data.IDbTransaction tx)
             {
                 CancelCalls.Add((id, reason));
                 // Like the real repository: stored columns only, Total/Balance left at their defaults.
@@ -108,13 +108,65 @@ namespace Module.Tests.Services
             }
         }
 
+        private class FakeTx : System.Data.IDbTransaction
+        {
+            public FakeTx(System.Data.IDbConnection connection) { Connection = connection; }
+            public System.Data.IDbConnection? Connection { get; }
+            public System.Data.IsolationLevel IsolationLevel => System.Data.IsolationLevel.ReadCommitted;
+            public int Commits { get; private set; }
+            public int Rollbacks { get; private set; }
+            public void Commit() => Commits++;
+            public void Rollback() => Rollbacks++;
+            public void Dispose() { }
+        }
+
+        private class FakeConnection : System.Data.IDbConnection, NPMotors.Repository.Interface.IRepositoryContext
+        {
+            public string ConnectionString { get; set; } = "";
+            public int ConnectionTimeout => 0;
+            public string Database => "fake";
+            public System.Data.ConnectionState State { get; private set; } = System.Data.ConnectionState.Closed;
+            public FakeTx? Tx { get; private set; }
+            public void Open() => State = System.Data.ConnectionState.Open;
+            public void Close() => State = System.Data.ConnectionState.Closed;
+            public void Dispose() { }
+            public System.Data.IDbTransaction BeginTransaction() => Tx = new FakeTx(this);
+            public System.Data.IDbTransaction BeginTransaction(System.Data.IsolationLevel il) => BeginTransaction();
+            public void ChangeDatabase(string databaseName) { }
+            public System.Data.IDbCommand CreateCommand() => throw new NotSupportedException();
+            public System.Data.IDbConnection GetDatabaseConnection() => this;
+        }
+
+        private class FakeArInvoiceRepository : NPMotors.Repository.Interface.IArInvoiceRepository
+        {
+            public List<long> CloseCalls { get; } = new();
+            public Exception? Throw { get; set; }
+
+            public Task<int> CloseArInvoice(long invoiceId, System.Data.IDbTransaction tx)
+            {
+                CloseCalls.Add(invoiceId);
+                if (Throw is not null)
+                    throw Throw;
+                return Task.FromResult(1);
+            }
+
+            public Task<long> InsertArInvoice(NPMotors.Repository.Models.ArInvoice arInvoice, System.Data.IDbTransaction tx) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.Models.ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
+            public Task<int> UpdateArPayment(NPMotors.Repository.Models.ArInvoice ar, decimal expectedBalance, System.Data.IDbTransaction tx) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetArAging(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
+        }
+
         private readonly FakeSalesInvoiceRepository _repository = new();
+        private readonly FakeArInvoiceRepository _arInvoices = new();
+        private readonly FakeCustomerBalanceService _balances = new();
+        private readonly FakeConnection _connection = new();
         private readonly SalesInvoiceService _service;
 
         public SalesInvoiceServiceTest()
         {
-            // Only the sales invoice repository is used by the Story 10-13 methods under test here.
-            _service = new SalesInvoiceService(_repository, null!, null!, null!, null!, null!, null!);
+            // The Story 10-13 methods use the sales invoice repository; cancel also uses the AR repository,
+            // the transaction and the customer balance service (Story 18).
+            _service = new SalesInvoiceService(_repository, null!, null!, _arInvoices, null!, null!, _connection, _balances);
         }
 
         private SalesInvoiceCreateDto NewInvoice(

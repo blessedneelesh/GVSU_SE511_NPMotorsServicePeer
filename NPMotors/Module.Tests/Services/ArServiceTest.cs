@@ -18,6 +18,8 @@ namespace Module.Tests.Services
             public PagedList<ArAgingDto> Page { get; set; } = new(new List<ArAgingDto>(), 0, 1, 5);
             public List<ArAgingParameters> Calls { get; } = new();
 
+            public Task<int> CloseArInvoice(long invoiceId, System.Data.IDbTransaction tx) => throw new NotSupportedException();
+
             public Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters)
             {
                 Calls.Add(parameters);

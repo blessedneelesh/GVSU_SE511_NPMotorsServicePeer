@@ -102,7 +102,7 @@ namespace Module.Tests.Services
             public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice) => throw new NotSupportedException();
             public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id) => throw new NotSupportedException();
-            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason) => throw new NotSupportedException();
+            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, System.Data.IDbTransaction tx) => throw new NotSupportedException();
         }
 
         private class FakeVehicleRepository : IVehicleRepository
@@ -161,6 +161,8 @@ namespace Module.Tests.Services
             public long ReturnId { get; set; } = 77;
             public Exception? Throw { get; set; }
             public List<(ArInvoice Ar, IDbTransaction Tx)> Calls { get; } = new();
+
+            public Task<int> CloseArInvoice(long invoiceId, IDbTransaction tx) => throw new NotSupportedException();
 
             public Task<ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
             public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx) => throw new NotSupportedException();
@@ -221,6 +223,7 @@ namespace Module.Tests.Services
         private readonly FakeArInvoiceRepository _arInvoices;
         private readonly FakeBankReceiptRepository _receipts;
         private readonly FakePostingService _posting;
+        private readonly FakeCustomerBalanceService _balances;
         private readonly SalesInvoiceService _service;
 
         public SalesInvoicePostInvoiceServiceTest()
@@ -232,8 +235,9 @@ namespace Module.Tests.Services
             _arInvoices = new FakeArInvoiceRepository(_log);
             _receipts = new FakeBankReceiptRepository(_log);
             _posting = new FakePostingService(_log);
+            _balances = new FakeCustomerBalanceService(_log);
             _service = new SalesInvoiceService(
-                _invoices, _vehicles, _accounts, _arInvoices, _receipts, _posting, new FakeRepositoryContext(_connection));
+                _invoices, _vehicles, _accounts, _arInvoices, _receipts, _posting, new FakeRepositoryContext(_connection), _balances);
         }
 
         private static SalesInvoice DraftInvoice(decimal total = 20000m) => new()
@@ -804,7 +808,7 @@ namespace Module.Tests.Services
                 new[]
                 {
                     "get-invoice", "get-account", "open", "begin", "update-invoice", "mark-sold",
-                    "insert-ar", "post-transaction", "insert-receipt", "commit"
+                    "insert-ar", "post-transaction", "insert-receipt", "update-customer-totals", "commit"
                 },
                 _log);
             Assert.Equal(1, _connection.Transaction!.Commits);
@@ -909,7 +913,7 @@ namespace Module.Tests.Services
             await _service.PostInvoice(42, Credit());
 
             Assert.Equal(
-                new[] { "get-invoice", "open", "begin", "update-invoice", "mark-sold", "insert-ar", "commit" },
+                new[] { "get-invoice", "open", "begin", "update-invoice", "mark-sold", "insert-ar", "update-customer-totals", "commit" },
                 _log);
         }
     }

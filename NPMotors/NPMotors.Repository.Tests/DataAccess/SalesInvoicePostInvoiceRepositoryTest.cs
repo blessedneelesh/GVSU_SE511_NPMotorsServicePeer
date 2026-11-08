@@ -247,7 +247,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         {
             var vehicleId = await CreateVehicleAsync();
             var posted = await _repository.PostSalesInvoice(NewDto(vehicleId));
-            await _repository.CancelSalesInvoice(posted.Id, new SalesInvoiceCancelDto { Reason = "itest" });
+            await _repository.CancelCommittedAsync(posted.Id, new SalesInvoiceCancelDto { Reason = "itest" });
             var invoice = (await _repository.GetInvoiceById(posted.Id))!;
             invoice.Lifecycle = "posted";
             var (connection, tx) = Begin();

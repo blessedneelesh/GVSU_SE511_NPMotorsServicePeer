@@ -14,7 +14,7 @@ namespace NPMotors.Repository.Interface
         Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice);
         Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters);
         Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id);
-        Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason);
+        Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, IDbTransaction tx);
         Task<SalesInvoice?> GetInvoiceById(long id);
         Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx);
         Task<int> UpdateInvoicePayment(SalesInvoice invoice, IDbTransaction tx);

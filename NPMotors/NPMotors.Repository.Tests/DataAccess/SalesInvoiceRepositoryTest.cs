@@ -496,7 +496,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         private async Task<SalesInvoiceResponseDto> CancelAsync(long id, string reason = "Entered by mistake")
         {
-            return await _repository.CancelSalesInvoice(id, new SalesInvoiceCancelDto { Reason = reason });
+            return await _repository.CancelCommittedAsync(id, new SalesInvoiceCancelDto { Reason = reason });
         }
 
         [Fact]

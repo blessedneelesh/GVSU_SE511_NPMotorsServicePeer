@@ -285,52 +285,38 @@ namespace NPMotors.Repository.Repositories
             public decimal Paid { get; set; }
         }
 
-        // One transaction: lock and check the invoice, mark it Cancelled with the reason, return the vehicle to inventory.
+        // Runs inside the caller's transaction (the service commits or rolls back): lock and check the invoice,
+        // mark it Cancelled with the reason, return the vehicle to inventory.
         // A missing invoice throws KeyNotFoundException (404); a rule violation throws ArgumentException (400).
-        public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
+        public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, IDbTransaction tx)
         {
-            using IDbConnection connection = _context.GetDatabaseConnection();
-            if (connection.State != ConnectionState.Open)
-                connection.Open();
-            using IDbTransaction transaction = connection.BeginTransaction();
+            var connection = tx.Connection!;
 
             var current = await connection.QuerySingleOrDefaultAsync<CancelState>(
                 "SELECT LOWER(lifecycle) AS Lifecycle, paid AS Paid FROM sales_invoice WHERE id = @Id FOR UPDATE",
-                new { Id = id }, transaction);
+                new { Id = id }, tx);
 
             if (current is null)
-            {
-                transaction.Rollback();
                 throw new KeyNotFoundException("The invoice does not exist.");
-            }
             if (current.Lifecycle != InvoiceLifecycle.Posted.ToDbValue())
-            {
-                transaction.Rollback();
                 throw new ArgumentException("Only Posted invoices can be cancelled.");
-            }
             if (current.Paid != 0)
-            {
-                transaction.Rollback();
                 throw new ArgumentException("An invoice with payments cannot be cancelled.");
-            }
 
             // The invoice keeps its vehicle_id as history; only the vehicle is released (matched through invoice_id).
             await connection.ExecuteAsync(
                 "UPDATE vehicle SET status = @Available, invoice_id = NULL WHERE invoice_id = @Id",
                 new { Id = id, Available = VehicleStatus.Available.ToDbValue() },
-                transaction);
+                tx);
 
             await connection.ExecuteAsync(
                 "UPDATE sales_invoice SET lifecycle = @Cancelled, cancel_reason = @Reason WHERE id = @Id",
                 new { Id = id, Cancelled = InvoiceLifecycle.Cancelled.ToDbValue(), Reason = reason.Reason },
-                transaction);
+                tx);
 
-            var cancelled = await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
+            return await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
                 $"SELECT {BrowseColumns} {BrowseFrom} WHERE si.id = @Id",
-                new { Id = id }, transaction);
-
-            transaction.Commit();
-            return cancelled;
+                new { Id = id }, tx);
         }
 
         // Stored columns only, for posting a Draft (Story 14).

@@ -83,6 +83,8 @@ namespace Module.Tests.Services
             // State of the AR at the moment UpdateArPayment was called.
             public List<(decimal Paid, decimal Balance, PaymentStatus Status, decimal ExpectedBalance, IDbTransaction Tx)> UpdateCalls { get; } = new();
 
+            public Task<int> CloseArInvoice(long invoiceId, IDbTransaction tx) => throw new NotSupportedException();
+
             public Task<ArInvoice?> GetArInvoiceById(long id)
             {
                 _log.Add("get-ar");
@@ -131,7 +133,7 @@ namespace Module.Tests.Services
             public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice) => throw new NotSupportedException();
             public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id) => throw new NotSupportedException();
-            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason) => throw new NotSupportedException();
+            public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, System.Data.IDbTransaction tx) => throw new NotSupportedException();
             public Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx) => throw new NotSupportedException();
         }
 
@@ -211,6 +213,7 @@ namespace Module.Tests.Services
         private readonly FakeBankAccountRepository _accounts;
         private readonly FakeBankReceiptRepository _receipts;
         private readonly FakePostingService _posting;
+        private readonly FakeCustomerBalanceService _balances;
         private readonly ReceiptService _service;
 
         public ReceiptServiceTest()
@@ -221,8 +224,9 @@ namespace Module.Tests.Services
             _accounts = new FakeBankAccountRepository(_log);
             _receipts = new FakeBankReceiptRepository(_log);
             _posting = new FakePostingService(_log);
+            _balances = new FakeCustomerBalanceService(_log);
             _service = new ReceiptService(
-                _arInvoices, _invoices, _accounts, _receipts, _posting, new FakeRepositoryContext(_connection));
+                _arInvoices, _invoices, _accounts, _receipts, _posting, new FakeRepositoryContext(_connection), _balances);
         }
 
         private static ArInvoice OpenAr() => new()
@@ -618,7 +622,7 @@ namespace Module.Tests.Services
                 new[]
                 {
                     "get-ar", "get-invoice", "get-account",
-                    "open", "begin", "update-ar", "update-invoice", "post-transaction", "insert-receipt", "commit",
+                    "open", "begin", "update-ar", "update-invoice", "post-transaction", "insert-receipt", "update-customer-totals", "commit",
                     "get-receipts"
                 },
                 _log);

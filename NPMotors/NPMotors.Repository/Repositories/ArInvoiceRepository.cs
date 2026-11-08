@@ -75,6 +75,15 @@ namespace NPMotors.Repository.Repositories
                 tx);
         }
 
+        // A cancelled invoice has no payments, so closing its AR (if it has one) just zeroes the balance.
+        public async Task<int> CloseArInvoice(long invoiceId, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                "UPDATE ar_invoice SET balance = 0 WHERE invoice_id = @InvoiceId",
+                new { InvoiceId = invoiceId },
+                tx);
+        }
+
         private const string AgingFrom =
             @"FROM ar_invoice ar
               JOIN sales_invoice si ON si.id = ar.invoice_id

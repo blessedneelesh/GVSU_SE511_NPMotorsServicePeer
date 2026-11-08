@@ -24,6 +24,7 @@ namespace NPMotors.Services
             services.AddScoped<IStatementLineService, StatementLineService>();
             services.AddScoped<IReceiptService, ReceiptService>();
             services.AddScoped<IArService, ArService>();
+            services.AddScoped<ICustomerBalanceService, CustomerBalanceService>();
 
             return services;
         }
