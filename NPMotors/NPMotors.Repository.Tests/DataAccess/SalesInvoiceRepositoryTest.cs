@@ -34,20 +34,23 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         public async Task DisposeAsync()
         {
+            // Sweep by this run's unique marker (not by tracked ids), so rows a failed test never
+            // tracked, such as a second invoice for the same vehicle, are removed too.
+            // Order follows the foreign keys: invoices, vehicles, vendors, customers, employees.
             using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
-            foreach (var id in _invoiceIds)
-            {
-                await connection.ExecuteAsync("UPDATE vehicle SET invoice_id = NULL WHERE invoice_id = @Id", new { Id = id });
-                await connection.ExecuteAsync("DELETE FROM sales_invoice WHERE id = @Id", new { Id = id });
-            }
-            foreach (var id in _vehicleIds)
-                await _vehicleRepository.DeleteVehicle(id);
-            foreach (var id in _vendorIds)
-                await _vendorRepository.DeleteVendor(id);
-            foreach (var id in _customerIds)
-                await _customerRepository.DeleteCustomer(id);
-            foreach (var id in _employeeIds)
-                await _employeeRepository.DeleteEmployee(id);
+            var pattern = new { Pattern = _marker + "%", VinPattern = _marker.ToUpperInvariant() + "%" };
+            const string markerVehicles =
+                "SELECT id FROM vehicle WHERE vendor_id IN (SELECT id FROM vendor WHERE name LIKE @Pattern) OR vin LIKE @VinPattern";
+            await connection.ExecuteAsync(
+                $"UPDATE vehicle SET invoice_id = NULL WHERE id IN ({markerVehicles})", pattern);
+            await connection.ExecuteAsync(
+                $@"DELETE FROM sales_invoice
+                   WHERE vehicle_id IN ({markerVehicles})
+                      OR customer_id IN (SELECT id FROM customer WHERE first_name LIKE @Pattern)", pattern);
+            await connection.ExecuteAsync($"DELETE FROM vehicle WHERE id IN ({markerVehicles})", pattern);
+            await connection.ExecuteAsync("DELETE FROM vendor WHERE name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM customer WHERE first_name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM employee WHERE first_name LIKE @Pattern", pattern);
         }
 
         private async Task<long> CreateCustomerAsync(Status status = Status.Active)
