@@ -26,6 +26,8 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("ReceiptDate", receipt.ReceiptDate.Date, DbType.Date);
             queryParams.Add("PaymentMethod", receipt.PaymentMethod.ToString());
             queryParams.Add("Reference", receipt.Reference);
+            queryParams.Add("Payer", receipt.Payer);
+            queryParams.Add("Description", receipt.Description);
             queryParams.Add("Amount", receipt.Amount);
             queryParams.Add("Status", receipt.Status);
             queryParams.Add("CreatedAt", receipt.CreatedAt);
@@ -35,9 +37,9 @@ namespace NPMotors.Repository.Repositories
             return await tx.Connection!.ExecuteScalarAsync<long>(
                 @"WITH next_id AS (SELECT nextval(pg_get_serial_sequence('bank_receipt', 'id')) AS id)
                   INSERT INTO bank_receipt (id, transaction_id, bank_account_id, customer_id, ar_invoice_id, sales_invoice_id,
-                                            receipt_number, receipt_date, payment_method, reference, amount, status, created_at, created_by)
+                                            receipt_number, receipt_date, payment_method, reference, payer, description, amount, status, created_at, created_by)
                   SELECT n.id, @TransactionId, @BankAccountId, @CustomerId, @ArInvoiceId, @SalesInvoiceId,
-                         @NumberPrefix || LPAD(n.id::text, 6, '0'), @ReceiptDate, @PaymentMethod, @Reference, @Amount, @Status, @CreatedAt, @CreatedBy
+                         @NumberPrefix || LPAD(n.id::text, 6, '0'), @ReceiptDate, @PaymentMethod, @Reference, @Payer, @Description, @Amount, @Status, @CreatedAt, @CreatedBy
                   FROM next_id n
                   RETURNING id",
                 queryParams, tx);

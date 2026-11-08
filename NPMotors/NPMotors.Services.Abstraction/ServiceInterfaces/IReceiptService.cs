@@ -6,5 +6,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
     {
         Task<ArInvoiceResponseDto?> RecordArPayment(long arInvoiceId, RecordArPaymentRequest request);
         Task<ArInvoiceResponseDto?> GetPaymentHistory(long arInvoiceId);
+        Task<BankReceiptResponseDto> RecordMiscReceipt(RecordMiscReceiptRequest request);
     }
 }

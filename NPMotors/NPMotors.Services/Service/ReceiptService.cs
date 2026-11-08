@@ -22,6 +22,7 @@ namespace NPMotors.Services.Service
         // No user context exists yet, so new records are attributed to the system.
         private const string CreatedBy = "system";
         private const string ReceiptStatus = "Posted";
+        private const string MiscReceiptSource = "BankReceipt";
         private const int MaxReferenceLength = 100;
 
         public ReceiptService(
@@ -127,6 +128,108 @@ namespace NPMotors.Services.Service
 
             var receipts = await _bankReceiptRepository.GetReceiptsByArInvoiceId(arInvoiceId);
             return ToResponseDto(ar, receipts);
+        }
+
+        // Validate first (nothing saved), then save the transaction, statement line, book balance and a new
+        // bank receipt in one transaction. No customer, invoice or AR repository is touched.
+        public async Task<BankReceiptResponseDto> RecordMiscReceipt(RecordMiscReceiptRequest request)
+        {
+            var account = await _bankAccountRepository.GetBankAccountById(request.BankAccountId);
+            ValidateMiscReceipt(request, account);
+
+            var receipt = new BankReceipt
+            {
+                BankAccountId = request.BankAccountId,
+                // CustomerId, SalesInvoiceId and ArInvoiceId stay null.
+                ReceiptDate = request.ReceiptDate,
+                PaymentMethod = request.PaymentMethod,
+                Reference = request.Reference?.Trim(),
+                Payer = request.Payer.Trim(),
+                Description = request.Description.Trim(),
+                Amount = request.Amount,
+                Status = ReceiptStatus,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = CreatedBy
+            };
+
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            try
+            {
+                receipt.TransactionId = await _transactionPostingService.PostTransaction(new PostTransactionRequest
+                {
+                    BankAccountId = receipt.BankAccountId,
+                    Direction = Direction.In,
+                    Amount = receipt.Amount,
+                    Date = receipt.ReceiptDate,
+                    Type = TransactionType.BankReceipt,
+                    SourceNumber = MiscReceiptSource,
+                    Party = receipt.Payer,
+                    Description = receipt.Description,
+                    Status = TransactionStatus.Posted
+                }, tx);
+
+                // Always a new row: earlier receipts are never updated.
+                receipt.Id = await _bankReceiptRepository.InsertBankReceipt(receipt, tx);
+                // Same format the repository stores: RCT-<year>-<id padded to 6>.
+                receipt.ReceiptNumber = $"RCT-{receipt.CreatedAt.Year}-{receipt.Id:D6}";
+
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+
+            return ToResponseDto(receipt, account!);
+        }
+
+        private static void ValidateMiscReceipt(RecordMiscReceiptRequest request, BankAccountResponseDto? account)
+        {
+            var errors = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(request.Payer))
+                errors.Add("Payer is required.");
+            if (request.ReceiptDate == default)
+                errors.Add("Receipt date is required.");
+            if (request.Amount <= 0)
+                errors.Add("Amount must be greater than zero.");
+            if (!Enum.IsDefined(request.PaymentMethod))
+                errors.Add("Payment method must be Cash, Card, Transfer or Check.");
+            if (request.BankAccountId <= 0)
+                errors.Add("Bank account is required.");
+            else if (account is null)
+                errors.Add("An existing bank account is required.");
+            else if (account.Status != Status.Active)
+                errors.Add("The bank account must be active.");
+            if (string.IsNullOrWhiteSpace(request.Description))
+                errors.Add("Description is required.");
+            if (request.Reference?.Trim().Length > MaxReferenceLength)
+                errors.Add($"Reference cannot exceed {MaxReferenceLength} characters.");
+
+            if (errors.Count > 0)
+                throw new ValidationException(string.Join(" ", errors));
+        }
+
+        private static BankReceiptResponseDto ToResponseDto(BankReceipt receipt, BankAccountResponseDto account)
+        {
+            return new BankReceiptResponseDto
+            {
+                Id = receipt.Id,
+                ReceiptNumber = receipt.ReceiptNumber,
+                ReceiptDate = receipt.ReceiptDate,
+                Payer = receipt.Payer,
+                Amount = receipt.Amount,
+                PaymentMethod = receipt.PaymentMethod,
+                Reference = receipt.Reference,
+                Description = receipt.Description,
+                BankAccountName = account.Name ?? string.Empty,
+                TransactionId = receipt.TransactionId
+            };
         }
 
         private static void ValidatePaymentAmount(RecordArPaymentRequest request, decimal arBalance)

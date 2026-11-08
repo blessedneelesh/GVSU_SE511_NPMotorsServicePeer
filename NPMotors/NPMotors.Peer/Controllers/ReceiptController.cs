@@ -35,6 +35,20 @@ namespace NPMotors.Peer.Controllers
             }
         }
 
+        [HttpPost]
+        public async Task<IActionResult> RecordMiscReceipt([FromBody] RecordMiscReceiptRequest request)
+        {
+            try
+            {
+                var receipt = await _receiptService.RecordMiscReceipt(request);
+                return StatusCode(201, receipt);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
+        }
+
         [HttpGet("{arInvoiceId:long}")]
         public async Task<IActionResult> GetPaymentHistory(long arInvoiceId)
         {
