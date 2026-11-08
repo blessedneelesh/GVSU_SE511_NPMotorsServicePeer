@@ -90,6 +90,8 @@ namespace Module.Tests.Services
                 return Task.FromResult(Ar);
             }
 
+            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetArAging(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
+
             public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx)
             {
                 _log.Add("update-ar");

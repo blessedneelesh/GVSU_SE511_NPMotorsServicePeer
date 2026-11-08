@@ -23,6 +23,7 @@ namespace NPMotors.Services
             services.AddScoped<ITransferService, TransferService>();
             services.AddScoped<IStatementLineService, StatementLineService>();
             services.AddScoped<IReceiptService, ReceiptService>();
+            services.AddScoped<IArService, ArService>();
 
             return services;
         }

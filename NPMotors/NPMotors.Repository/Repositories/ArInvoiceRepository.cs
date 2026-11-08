@@ -2,7 +2,9 @@ using System.Data;
 using Dapper;
 using NPMotors.Repository.Interface;
 using NPMotors.Repository.Models;
+using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
+using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Repository.Repositories
 {
@@ -71,6 +73,58 @@ namespace NPMotors.Repository.Repositories
                     ExpectedBalance = expectedBalance
                 },
                 tx);
+        }
+
+        private const string AgingFrom =
+            @"FROM ar_invoice ar
+              JOIN sales_invoice si ON si.id = ar.invoice_id
+              JOIN customer c ON c.id = si.customer_id";
+
+        // Open AR only (balance > 0). Overdue = past due date; Unpaid/Partial = stored status and not past due.
+        public async Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            var asOfDate = (parameters.AsOfDate ?? DateTime.Today).Date;
+            var whereClauses = new List<string> { "ar.balance > 0" };
+            var queryParams = new DynamicParameters();
+            queryParams.Add("AsOfDate", asOfDate, DbType.Date);
+
+            if (parameters.CustomerId is not null)
+            {
+                whereClauses.Add("c.id = @CustomerId");
+                queryParams.Add("CustomerId", parameters.CustomerId.Value);
+            }
+
+            var status = parameters.Status?.Trim().ToLowerInvariant();
+            if (status == "overdue")
+            {
+                whereClauses.Add("ar.due_date < @AsOfDate");
+            }
+            else if (status == "unpaid" || status == "partial")
+            {
+                whereClauses.Add("LOWER(ar.status) = @Status");
+                whereClauses.Add("(ar.due_date IS NULL OR ar.due_date >= @AsOfDate)");
+                queryParams.Add("Status", status);
+            }
+
+            var whereSql = " WHERE " + string.Join(" AND ", whereClauses);
+
+            var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {AgingFrom}{whereSql}", queryParams);
+
+            queryParams.Add("Offset", (parameters.PageNumber - 1) * parameters.PageSize);
+            queryParams.Add("Limit", parameters.PageSize);
+
+            var items = (await connection.QueryAsync<ArAgingDto>(
+                $@"SELECT ar.id AS Id, ar.number AS Number, c.id AS CustomerId,
+                          CONCAT_WS(' ', c.first_name, c.last_name) AS Customer_Name,
+                          si.number AS Invoice_Number, ar.due_date AS Due_Date,
+                          ar.amount AS Amount, ar.paid AS Paid, ar.balance AS Balance, ar.status AS Status
+                   {AgingFrom}{whereSql}
+                   ORDER BY ar.due_date, ar.number OFFSET @Offset LIMIT @Limit",
+                queryParams)).ToList();
+
+            return new PagedList<ArAgingDto>(items, count, parameters.PageNumber, parameters.PageSize);
         }
     }
 }
