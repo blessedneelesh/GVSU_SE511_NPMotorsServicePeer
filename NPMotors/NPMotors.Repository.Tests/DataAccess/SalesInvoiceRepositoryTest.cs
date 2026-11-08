@@ -262,14 +262,15 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task AddSalesInvoice_VehicleAlreadyInvoiced_Throws()
+        public async Task AddSalesInvoice_VehicleAlreadyHasDraft_AllowsSecondDraft()
         {
+            // Story 12 AC5: a vehicle can be on several drafts; only one posted invoice is allowed.
             var dto = await ValidDtoAsync();
-            await AddAsync(dto);
+            var first = await AddAsync(dto);
 
-            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.AddSalesInvoice(dto));
+            var second = await AddAsync(dto);
 
-            Assert.Equal("This vehicle already has a sales invoice.", ex.Message);
+            Assert.NotEqual(first.Id, second.Id);
         }
 
         // ---- PostSalesInvoice ----
@@ -349,16 +350,25 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task PostSalesInvoice_VehicleAlreadyHasDraft_Throws()
+        public async Task PostSalesInvoice_VehicleAlreadyHasDraft_PostsAndMarksVehicleSold()
         {
             var dto = await ValidDtoAsync();
             await AddAsync(dto);
 
-            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
+            var posted = await PostAsync(dto);
 
-            Assert.Equal("This vehicle already has a sales invoice.", ex.Message);
+            Assert.Equal(InvoiceLifecycle.Posted, posted.Lifecycle);
             var vehicle = await _vehicleRepository.GetVehicleById(dto.Vehicle_Id);
-            Assert.Equal(VehicleStatus.Available, vehicle!.Status);
+            Assert.Equal(VehicleStatus.Sold, vehicle!.Status);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_VehicleAlreadyPosted_Throws()
+        {
+            var dto = await ValidDtoAsync();
+            await PostAsync(dto);
+
+            await Assert.ThrowsAsync<ArgumentException>(() => _repository.PostSalesInvoice(dto));
         }
 
         [Theory]

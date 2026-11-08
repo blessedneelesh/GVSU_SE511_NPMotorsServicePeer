@@ -215,12 +215,24 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task AddSalesInvoice_VehicleAlreadyInvoiced_Returns400()
+        public async Task AddSalesInvoice_VehicleAlreadyHasDraft_Returns201ForSecondDraft()
         {
+            // Story 12 AC5: a vehicle can be on several drafts; only one posted invoice is allowed.
             var dto = await ValidDtoAsync();
             await PostAsync(dto);
 
             var response = await PostAsync(dto);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task PostSalesInvoice_VehicleAlreadyPosted_Returns400()
+        {
+            var dto = await ValidDtoAsync();
+            await PostInvoiceAsync(dto);
+
+            var response = await PostInvoiceAsync(dto);
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
