@@ -3,6 +3,7 @@ using Dapper;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
+using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Service;
 
 namespace Module.Tests.Services
@@ -137,6 +138,133 @@ namespace Module.Tests.Services
             Assert.Equal(1, results.Count(r => r));
             Assert.Equal(30m, await BookBalanceAsync());
             Assert.Equal(1, await TransactionCountAsync());
+        }
+
+        // ---- Story 9: simulated statement lines, end to end ----
+
+        private async Task<List<StatementLineResponseDto>> LinesAsync() =>
+            (await new BankStatementLineRepository(_repositoryContext).GetStatementLines(
+                new StatementLineParameters { BankAccountId = _accountId, PageSize = 100 })).ToList();
+
+        private PostTransactionRequest DatedRequest(Direction direction, decimal amount, DateTime date) => new()
+        {
+            BankAccountId = _accountId,
+            Direction = direction,
+            Amount = amount,
+            Date = date,
+            Type = TransactionType.BankAdjustment,
+            SourceNumber = "ADJ-1",
+            Status = TransactionStatus.Posted
+        };
+
+        [Fact]
+        public async Task PostTransaction_PostedIncoming_CreatesOneSimulatedClearedMatchedLineWithDeposit()
+        {
+            var id = await _service.PostTransaction(Request(Direction.In, 40m, TransactionStatus.Posted));
+
+            var line = Assert.Single(await LinesAsync());
+            Assert.Equal(id, line.Transaction_Id);
+            Assert.Equal("Simulated", line.Source);
+            Assert.Equal("Cleared", line.Statement_Status);
+            Assert.Equal("Matched", line.Match_Status);
+            Assert.Equal("in", line.Direction);
+            Assert.Equal(40m, line.Deposit);
+            Assert.Equal(0m, line.Withdrawal);
+            Assert.Equal(new DateTime(2026, 3, 15), line.Posted_Date);
+            Assert.Equal("BankAdjustment", line.Type);
+            Assert.Equal(140m, line.Running_Balance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_PostedOutgoing_CreatesLineWithWithdrawal()
+        {
+            await _service.PostTransaction(Request(Direction.Out, 30m, TransactionStatus.Posted));
+
+            var line = Assert.Single(await LinesAsync());
+            Assert.Equal("out", line.Direction);
+            Assert.Equal(30m, line.Withdrawal);
+            Assert.Equal(0m, line.Deposit);
+            Assert.Equal(70m, line.Running_Balance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_Draft_CreatesNoLine()
+        {
+            await _service.PostTransaction(Request(Direction.In, 40m, TransactionStatus.Draft));
+
+            Assert.Empty(await LinesAsync());
+        }
+
+        [Fact]
+        public async Task PostTransaction_ThreePostings_RunningBalanceChainsFromOpeningBalance()
+        {
+            // Opening balance 100: +40 = 140, -30 = 110, +10 = 120.
+            await _service.PostTransaction(DatedRequest(Direction.In, 40m, new DateTime(2026, 3, 1)));
+            await _service.PostTransaction(DatedRequest(Direction.Out, 30m, new DateTime(2026, 3, 2)));
+            await _service.PostTransaction(DatedRequest(Direction.In, 10m, new DateTime(2026, 3, 3)));
+
+            var lines = await LinesAsync();
+            Assert.Equal(new[] { 140m, 110m, 120m }, lines.Select(l => l.Running_Balance).ToArray());
+            Assert.Equal(await BookBalanceAsync(), lines.Last().Running_Balance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_TwoPostingsSameDay_RunningBalanceFollowsInsertOrder()
+        {
+            await _service.PostTransaction(DatedRequest(Direction.In, 40m, new DateTime(2026, 3, 1)));
+            await _service.PostTransaction(DatedRequest(Direction.Out, 15m, new DateTime(2026, 3, 1)));
+
+            var lines = await LinesAsync();
+            Assert.Equal(new[] { 140m, 125m }, lines.Select(l => l.Running_Balance).ToArray());
+        }
+
+        [Fact]
+        public async Task PostTransaction_OutgoingAboveBalance_CreatesNoLine()
+        {
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.PostTransaction(Request(Direction.Out, 100.01m, TransactionStatus.Posted)));
+
+            Assert.Empty(await LinesAsync());
+        }
+
+        [Fact]
+        public async Task PostTransaction_CallersTxRolledBack_UndoesTheLineToo()
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            using (var tx = connection.BeginTransaction())
+            {
+                await _service.PostTransaction(Request(Direction.In, 40m, TransactionStatus.Posted), tx);
+                tx.Rollback();
+            }
+
+            Assert.Empty(await LinesAsync());
+        }
+
+        [Fact]
+        public async Task PostTransaction_CallersTxCommitted_SavesTransactionAndLineTogether()
+        {
+            long id;
+            using (var connection = _repositoryContext.GetDatabaseConnection())
+            using (var tx = connection.BeginTransaction())
+            {
+                id = await _service.PostTransaction(Request(Direction.In, 40m, TransactionStatus.Posted), tx);
+                tx.Commit();
+            }
+
+            Assert.Equal(id, Assert.Single(await LinesAsync()).Transaction_Id);
+            Assert.Equal(1, await TransactionCountAsync());
+        }
+
+        [Fact]
+        public async Task PostTransaction_TwoConcurrentOutgoingPostings_EachLineSeesTheOtherInItsBalance()
+        {
+            // 20 + 20 fit in 100: the row lock makes the second posting read the first line's balance.
+            await Task.WhenAll(
+                _service.PostTransaction(Request(Direction.Out, 20m, TransactionStatus.Posted)),
+                _service.PostTransaction(Request(Direction.Out, 20m, TransactionStatus.Posted)));
+
+            var lines = await LinesAsync();
+            Assert.Equal(new[] { 80m, 60m }, lines.Select(l => l.Running_Balance).OrderByDescending(b => b).ToArray());
         }
 
         private async Task<bool> Attempt(PostTransactionRequest request)

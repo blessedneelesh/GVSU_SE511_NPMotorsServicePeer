@@ -129,6 +129,7 @@ namespace Module.Tests.Services
             public FakeBankStatementLineRepository(List<string> log) { _log = log; }
 
             public decimal? LastRunningBalance { get; set; }
+            public Exception? InsertException { get; set; }
             public List<(long AccountId, IDbTransaction Tx)> LastBalanceCalls { get; } = new();
             public List<(BankStatementLine Line, IDbTransaction Tx)> InsertCalls { get; } = new();
 
@@ -142,6 +143,7 @@ namespace Module.Tests.Services
             public Task<long> InsertStatementLine(BankStatementLine line, IDbTransaction tx)
             {
                 _log.Add("insert-line");
+                if (InsertException is not null) throw InsertException;
                 InsertCalls.Add((line, tx));
                 return Task.FromResult(900L);
             }
@@ -600,6 +602,244 @@ namespace Module.Tests.Services
             var id = await _service.PostTransaction(Request());
 
             Assert.Equal(9001, id);
+        }
+
+        // ---- Story 9 AC 1: a posted transaction creates exactly one line in the same save ----
+
+        [Fact]
+        public async Task PostTransaction_Posted_CreatesExactlyOneStatementLine()
+        {
+            await _service.PostTransaction(Request());
+
+            Assert.Single(_lines.InsertCalls);
+        }
+
+        [Fact]
+        public async Task PostTransaction_Posted_LineSourceIsSimulatedAndStatusCleared()
+        {
+            await _service.PostTransaction(Request());
+
+            var line = Assert.Single(_lines.InsertCalls).Line;
+            Assert.Equal(StatementSource.Simulated, line.Source);
+            Assert.Equal(StatementStatus.Cleared, line.StatementStatus);
+        }
+
+        [Fact]
+        public async Task PostTransaction_Draft_CreatesNoStatementLine()
+        {
+            await _service.PostTransaction(Request(status: TransactionStatus.Draft));
+
+            Assert.Empty(_lines.InsertCalls);
+            Assert.Empty(_lines.LastBalanceCalls);
+        }
+
+        [Fact]
+        public async Task PostTransaction_OwnTx_SavesLineInTheSameDbTransactionAsTheTransaction()
+        {
+            await _service.PostTransaction(Request());
+
+            var lineTx = Assert.Single(_lines.InsertCalls).Tx;
+            Assert.Same(Assert.Single(_transactions.InsertCalls).Tx, lineTx);
+            Assert.Same(_connection.Transaction, lineTx);
+            Assert.Same(_connection.Transaction, Assert.Single(_lines.LastBalanceCalls).Tx);
+        }
+
+        [Fact]
+        public async Task PostTransaction_WithTx_SavesLineInCallersTx()
+        {
+            var callerTx = new FakeDbTransaction(new FakeDbConnection(_log), _log);
+
+            await _service.PostTransaction(Request(), callerTx);
+
+            Assert.Same(callerTx, Assert.Single(_lines.InsertCalls).Tx);
+            Assert.Same(callerTx, Assert.Single(_lines.LastBalanceCalls).Tx);
+        }
+
+        [Fact]
+        public async Task PostTransaction_LineInsertFails_RollsBackAndNeverCommits()
+        {
+            _lines.InsertException = new InvalidOperationException("line failed");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => _service.PostTransaction(Request()));
+
+            Assert.Equal(1, _connection.Transaction!.Rollbacks);
+            Assert.Equal(0, _connection.Transaction.Commits);
+        }
+
+        [Fact]
+        public async Task PostTransaction_ValidationFails_CreatesNoStatementLine()
+        {
+            await Assert.ThrowsAsync<ValidationException>(() => _service.PostTransaction(Request(amount: 0m)));
+
+            Assert.Empty(_lines.InsertCalls);
+        }
+
+        [Fact]
+        public async Task PostTransaction_InsufficientBalance_CreatesNoStatementLine()
+        {
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.PostTransaction(Request(Direction.Out, 999m)));
+
+            Assert.Empty(_lines.InsertCalls);
+        }
+
+        // ---- Story 9 AC 2: BuildStatementLine, deposit or withdrawal, never both ----
+
+        [Fact]
+        public async Task PostTransaction_Incoming_LineHasDepositAndNoWithdrawal()
+        {
+            await _service.PostTransaction(Request(Direction.In, 40m));
+
+            var line = Assert.Single(_lines.InsertCalls).Line;
+            Assert.Equal(Direction.In, line.Direction);
+            Assert.Equal(40m, line.Deposit);
+            Assert.Equal(0m, line.Withdrawal);
+        }
+
+        [Fact]
+        public async Task PostTransaction_Outgoing_LineHasWithdrawalAndNoDeposit()
+        {
+            await _service.PostTransaction(Request(Direction.Out, 30m));
+
+            var line = Assert.Single(_lines.InsertCalls).Line;
+            Assert.Equal(Direction.Out, line.Direction);
+            Assert.Equal(30m, line.Withdrawal);
+            Assert.Equal(0m, line.Deposit);
+        }
+
+        [Theory]
+        [InlineData(Direction.In, 0.01)]
+        [InlineData(Direction.Out, 0.01)]
+        [InlineData(Direction.In, 12.34)]
+        [InlineData(Direction.Out, 99.99)]
+        public async Task PostTransaction_AnyDirection_NeverSetsBothDepositAndWithdrawal(Direction direction, double amount)
+        {
+            await _service.PostTransaction(Request(direction, (decimal)amount));
+
+            var line = Assert.Single(_lines.InsertCalls).Line;
+            Assert.True(line.Deposit == 0m || line.Withdrawal == 0m);
+            Assert.Equal((decimal)amount, line.Deposit + line.Withdrawal);
+        }
+
+        // ---- Story 9 AC 3: Matched, stores the Transaction ID, copies the transaction fields ----
+
+        [Fact]
+        public async Task PostTransaction_Posted_LineIsMatchedAndStoresTransactionId()
+        {
+            _transactions.NextId = 777;
+
+            await _service.PostTransaction(Request());
+
+            var line = Assert.Single(_lines.InsertCalls).Line;
+            Assert.Equal(MatchStatus.Matched, line.MatchStatus);
+            Assert.Equal(777L, line.TransactionId);
+        }
+
+        [Fact]
+        public async Task PostTransaction_Posted_LineCopiesAccountDateTypePartyAndDescription()
+        {
+            await _service.PostTransaction(Request());
+
+            var line = Assert.Single(_lines.InsertCalls).Line;
+            Assert.Equal(3L, line.BankAccountId);
+            Assert.Equal(new DateTime(2026, 3, 15), line.PostedDate);
+            Assert.Equal(TransactionType.BankReceipt, line.Type);
+            Assert.Equal("Acme", line.Party);
+            Assert.Equal("Deposit", line.Description);
+            Assert.Null(line.BankReference);
+        }
+
+        // ---- Story 9 AC 4: CalculateRunningBalance = previous + deposit - withdrawal ----
+
+        [Fact]
+        public async Task PostTransaction_IncomingWithPreviousLine_RunningBalanceIsPreviousPlusDeposit()
+        {
+            _lines.LastRunningBalance = 500m;
+
+            await _service.PostTransaction(Request(Direction.In, 40m));
+
+            Assert.Equal(540m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_OutgoingWithPreviousLine_RunningBalanceIsPreviousMinusWithdrawal()
+        {
+            _lines.LastRunningBalance = 500m;
+
+            await _service.PostTransaction(Request(Direction.Out, 30m));
+
+            Assert.Equal(470m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_NoPreviousLine_StartsFromOpeningBalance()
+        {
+            _accounts.Account!.OpeningBalance = 1000m;
+            _lines.LastRunningBalance = null;
+
+            await _service.PostTransaction(Request(Direction.In, 40m));
+
+            Assert.Equal(1040m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_NoPreviousLine_OutgoingStartsFromOpeningBalance()
+        {
+            _accounts.Account!.OpeningBalance = 1000m;
+
+            await _service.PostTransaction(Request(Direction.Out, 30m));
+
+            Assert.Equal(970m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_PreviousLineExists_OpeningBalanceIsNotUsed()
+        {
+            _accounts.Account!.OpeningBalance = 1000m;
+            _lines.LastRunningBalance = 500m;
+
+            await _service.PostTransaction(Request(Direction.In, 40m));
+
+            Assert.Equal(540m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_PreviousBalanceZero_IsUsedNotTreatedAsMissing()
+        {
+            _accounts.Account!.OpeningBalance = 1000m;
+            _lines.LastRunningBalance = 0m;
+
+            await _service.PostTransaction(Request(Direction.In, 40m));
+
+            Assert.Equal(40m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_OutgoingBelowPreviousBalance_RunningBalanceCanBeNegative()
+        {
+            _lines.LastRunningBalance = 10m;
+
+            await _service.PostTransaction(Request(Direction.Out, 30m));
+
+            Assert.Equal(-20m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_RunningBalance_KeepsCents()
+        {
+            _lines.LastRunningBalance = 100.10m;
+
+            await _service.PostTransaction(Request(Direction.In, 0.25m));
+
+            Assert.Equal(100.35m, Assert.Single(_lines.InsertCalls).Line.RunningBalance);
+        }
+
+        [Fact]
+        public async Task PostTransaction_Posted_ReadsPreviousBalanceOfTheTransactionsAccount()
+        {
+            await _service.PostTransaction(Request());
+
+            Assert.Equal(3L, Assert.Single(_lines.LastBalanceCalls).AccountId);
         }
     }
 }
