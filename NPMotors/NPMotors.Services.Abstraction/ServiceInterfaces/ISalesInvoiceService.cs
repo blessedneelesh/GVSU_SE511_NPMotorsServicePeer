@@ -14,5 +14,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
         Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id);
         Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason);
         Task<SalesInvoiceResponseDto?> PostInvoice(long id, PostInvoiceRequest request);
+        Task<SalesInvoiceResponseDto> CreateAndPostInvoice(SalesInvoiceCreateAndPostRequest request);
     }
 }

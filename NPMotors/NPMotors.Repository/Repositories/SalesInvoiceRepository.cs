@@ -68,8 +68,18 @@ namespace NPMotors.Repository.Repositories
         public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
+            return await InsertDraftAsync(connection, invoice, null);
+        }
 
-            await ValidateSelectionAsync(connection, invoice);
+        // Runs inside the caller's transaction (create-and-post); the service commits or rolls back.
+        public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx)
+        {
+            return await InsertDraftAsync(tx.Connection!, invoice, tx);
+        }
+
+        private static async Task<SalesInvoiceResponseDto> InsertDraftAsync(IDbConnection connection, SalesInvoiceCreateDto invoice, IDbTransaction? tx)
+        {
+            await ValidateSelectionAsync(connection, invoice, tx);
 
             var queryParams = new DynamicParameters();
             queryParams.Add("CustomerId", invoice.Customer_Id);
@@ -110,7 +120,7 @@ namespace NPMotors.Repository.Repositories
                           COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost, ins.sale_price AS Sale_Price,
                           ins.tax, ins.fees, ins.discount, ins.paid, ins.lifecycle AS Lifecycle, ins.payment_status AS Payment_Status
                    FROM ins JOIN vehicle v ON v.id = ins.vehicle_id",
-                queryParams);
+                queryParams, tx);
 
             return created ?? throw new ArgumentException("The invoice could not be created because the customer, salesperson or vehicle is no longer eligible.");
         }
@@ -323,12 +333,22 @@ namespace NPMotors.Repository.Repositories
         public async Task<SalesInvoice?> GetInvoiceById(long id)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
+            return await SelectInvoiceAsync(connection, id, null);
+        }
 
+        // Same read inside the caller's transaction, so an invoice inserted in it is visible.
+        public async Task<SalesInvoice?> GetInvoiceById(long id, IDbTransaction tx)
+        {
+            return await SelectInvoiceAsync(tx.Connection!, id, tx);
+        }
+
+        private static async Task<SalesInvoice?> SelectInvoiceAsync(IDbConnection connection, long id, IDbTransaction? tx)
+        {
             return await connection.QuerySingleOrDefaultAsync<SalesInvoice>(
                 @"SELECT id, number, customer_id AS CustomerId, vehicle_id AS VehicleId, due_date AS DueDate,
                          COALESCE(total, 0) AS Total, paid, balance, payment_status AS PaymentStatus, lifecycle
                   FROM sales_invoice WHERE id = @Id",
-                new { Id = id });
+                new { Id = id }, tx);
         }
 
         // Only a Draft can be posted: 0 rows means the invoice was posted or cancelled in the meantime.
@@ -376,11 +396,11 @@ namespace NPMotors.Repository.Repositories
                 tx);
         }
 
-        private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)
+        private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams, IDbTransaction? tx = null)
         {
             try
             {
-                return await connection.QuerySingleOrDefaultAsync<SalesInvoiceResponseDto>(sql, queryParams);
+                return await connection.QuerySingleOrDefaultAsync<SalesInvoiceResponseDto>(sql, queryParams, tx);
             }
             catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
             {

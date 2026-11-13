@@ -1,4 +1,6 @@
+using System.Data;
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.RequestFeatures;
@@ -86,6 +88,10 @@ namespace Module.Tests.Services
                     Payment_Status = PaymentStatus.Unpaid
                 });
             }
+
+            public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx) => throw new NotSupportedException();
+
+            public Task<SalesInvoice?> GetInvoiceById(long id, IDbTransaction tx) => throw new NotSupportedException();
 
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
             {

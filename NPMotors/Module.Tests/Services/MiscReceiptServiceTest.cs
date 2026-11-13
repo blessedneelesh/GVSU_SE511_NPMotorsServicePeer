@@ -92,6 +92,8 @@ namespace Module.Tests.Services
 
             public Task<SalesInvoice?> GetInvoiceById(long id) { _log.Add("invoice-get"); return Task.FromResult<SalesInvoice?>(null); }
             public Task<int> UpdateInvoicePayment(SalesInvoice invoice, IDbTransaction tx) { _log.Add("invoice-update"); return Task.FromResult(0); }
+            public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx) => throw new NotSupportedException();
+            public Task<SalesInvoice?> GetInvoiceById(long id, IDbTransaction tx) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice) { _log.Add("invoice-add"); throw new NotSupportedException(); }
             public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice) { _log.Add("invoice-post"); throw new NotSupportedException(); }
             public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters) { _log.Add("invoice-list"); throw new NotSupportedException(); }

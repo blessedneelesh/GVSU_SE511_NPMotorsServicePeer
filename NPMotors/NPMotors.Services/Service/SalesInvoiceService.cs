@@ -1,4 +1,4 @@
-using NPMotors.Services.Abstractions.ServiceInterfaces;
+﻿using NPMotors.Services.Abstractions.ServiceInterfaces;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -135,6 +135,60 @@ namespace NPMotors.Services.Service
                 return null;
 
             EnsureDraft(invoice);
+            await ValidateAndApplyPayment(invoice, request);
+
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            try
+            {
+                var posted = await SavePostedInvoice(invoice, request, tx);
+                tx.Commit();
+                return posted;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        // Adds the invoice as a Draft and posts it in one transaction: if any post rule fails,
+        // the Draft is rolled back too, so no stray Draft is left behind.
+        public async Task<SalesInvoiceResponseDto> CreateAndPostInvoice(SalesInvoiceCreateAndPostRequest request)
+        {
+            ValidateInvoice((SalesInvoiceCreateDto)request);
+            var postRequest = request.ToPostInvoiceRequest();
+
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            try
+            {
+                var draft = await _salesInvoiceRepository.AddSalesInvoice(request, tx);
+                var invoice = await _salesInvoiceRepository.GetInvoiceById(draft.Id, tx)
+                    ?? throw new ConflictException("The invoice could not be read after it was created.");
+
+                await ValidateAndApplyPayment(invoice, postRequest);
+
+                var posted = await SavePostedInvoice(invoice, postRequest, tx);
+                tx.Commit();
+                return posted;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        // Nothing is saved here: Story 12 rules, payment rules and bank account, then the paid/balance/status fields.
+        private async Task ValidateAndApplyPayment(SalesInvoice invoice, PostInvoiceRequest request)
+        {
             ValidateInvoice(invoice);
             ValidateAmountReceived(request, invoice.Total);
 
@@ -148,85 +202,74 @@ namespace NPMotors.Services.Service
 
             ApplyPaymentCondition(invoice, request.AmountReceived);
             invoice.Lifecycle = InvoiceLifecycle.Posted.ToDbValue();
+        }
 
-            using IDbConnection connection = _context.GetDatabaseConnection();
-            if (connection.State != ConnectionState.Open)
-                connection.Open();
-            using IDbTransaction tx = connection.BeginTransaction();
+        // Runs inside the caller's transaction (the caller commits or rolls back).
+        private async Task<SalesInvoiceResponseDto> SavePostedInvoice(SalesInvoice invoice, PostInvoiceRequest request, IDbTransaction tx)
+        {
+            var updatedRows = await _salesInvoiceRepository.UpdatePostedInvoice(invoice, tx);
+            if (updatedRows == 0)
+                throw new ConflictException("The invoice is no longer a draft.");
 
-            try
+            var soldRows = await _vehicleRepository.MarkVehicleSold(invoice.VehicleId, invoice.Id, tx);
+            if (soldRows == 0)
+                throw new ConflictException("The vehicle is already sold.");
+
+            long? arInvoiceId = null;
+            var arInvoice = CreateArInvoiceIfBalance(invoice);
+            if (arInvoice is not null)
+                arInvoiceId = await _arInvoiceRepository.InsertArInvoice(arInvoice, tx);
+
+            long? receiptId = null;
+            if (request.AmountReceived > 0)
             {
-                var updatedRows = await _salesInvoiceRepository.UpdatePostedInvoice(invoice, tx);
-                if (updatedRows == 0)
-                    throw new ConflictException("The invoice is no longer a draft.");
-
-                var soldRows = await _vehicleRepository.MarkVehicleSold(invoice.VehicleId, invoice.Id, tx);
-                if (soldRows == 0)
-                    throw new ConflictException("The vehicle is already sold.");
-
-                long? arInvoiceId = null;
-                var arInvoice = CreateArInvoiceIfBalance(invoice);
-                if (arInvoice is not null)
-                    arInvoiceId = await _arInvoiceRepository.InsertArInvoice(arInvoice, tx);
-
-                long? receiptId = null;
-                if (request.AmountReceived > 0)
+                var receiptDate = request.ReceiptDate ?? DateTime.UtcNow;
+                var transactionId = await _transactionPostingService.PostTransaction(new PostTransactionRequest
                 {
-                    var receiptDate = request.ReceiptDate ?? DateTime.UtcNow;
-                    var transactionId = await _transactionPostingService.PostTransaction(new PostTransactionRequest
-                    {
-                        BankAccountId = request.BankAccountId!.Value,
-                        Direction = Direction.In,
-                        Amount = request.AmountReceived,
-                        Date = receiptDate,
-                        Type = TransactionType.BankReceipt,
-                        SourceNumber = invoice.Number,
-                        Description = $"Payment received for sales invoice {invoice.Number}",
-                        Status = TransactionStatus.Posted
-                    }, tx);
+                    BankAccountId = request.BankAccountId!.Value,
+                    Direction = Direction.In,
+                    Amount = request.AmountReceived,
+                    Date = receiptDate,
+                    Type = TransactionType.BankReceipt,
+                    SourceNumber = invoice.Number,
+                    Description = $"Payment received for sales invoice {invoice.Number}",
+                    Status = TransactionStatus.Posted
+                }, tx);
 
-                    receiptId = await _bankReceiptRepository.InsertBankReceipt(new BankReceipt
-                    {
-                        TransactionId = transactionId,
-                        BankAccountId = request.BankAccountId.Value,
-                        CustomerId = invoice.CustomerId,
-                        SalesInvoiceId = invoice.Id,
-                        ArInvoiceId = arInvoiceId,
-                        ReceiptDate = receiptDate,
-                        PaymentMethod = request.PaymentMethod!.Value,
-                        Reference = request.Reference?.Trim(),
-                        Amount = request.AmountReceived,
-                        Status = ReceiptStatus,
-                        CreatedAt = DateTime.UtcNow,
-                        CreatedBy = CreatedBy
-                    }, tx);
-                }
-
-                await _customerBalanceService.UpdateCustomerTotals(invoice.CustomerId, tx);
-
-                tx.Commit();
-
-                return new SalesInvoiceResponseDto
+                receiptId = await _bankReceiptRepository.InsertBankReceipt(new BankReceipt
                 {
-                    Id = invoice.Id,
-                    Number = invoice.Number,
-                    Customer_Id = invoice.CustomerId,
-                    Vehicle_Id = invoice.VehicleId,
-                    Due_Date = invoice.DueDate,
-                    Total = invoice.Total,
-                    Paid = invoice.Paid,
-                    Balance = invoice.Balance,
-                    Lifecycle = InvoiceLifecycle.Posted,
-                    Payment_Status = invoice.PaymentStatus,
-                    Ar_Invoice_Id = arInvoiceId,
-                    Bank_Receipt_Id = receiptId
-                };
+                    TransactionId = transactionId,
+                    BankAccountId = request.BankAccountId.Value,
+                    CustomerId = invoice.CustomerId,
+                    SalesInvoiceId = invoice.Id,
+                    ArInvoiceId = arInvoiceId,
+                    ReceiptDate = receiptDate,
+                    PaymentMethod = request.PaymentMethod!.Value,
+                    Reference = request.Reference?.Trim(),
+                    Amount = request.AmountReceived,
+                    Status = ReceiptStatus,
+                    CreatedAt = DateTime.UtcNow,
+                    CreatedBy = CreatedBy
+                }, tx);
             }
-            catch
+
+            await _customerBalanceService.UpdateCustomerTotals(invoice.CustomerId, tx);
+
+            return new SalesInvoiceResponseDto
             {
-                tx.Rollback();
-                throw;
-            }
+                Id = invoice.Id,
+                Number = invoice.Number,
+                Customer_Id = invoice.CustomerId,
+                Vehicle_Id = invoice.VehicleId,
+                Due_Date = invoice.DueDate,
+                Total = invoice.Total,
+                Paid = invoice.Paid,
+                Balance = invoice.Balance,
+                Lifecycle = InvoiceLifecycle.Posted,
+                Payment_Status = invoice.PaymentStatus,
+                Ar_Invoice_Id = arInvoiceId,
+                Bank_Receipt_Id = receiptId
+            };
         }
 
         private void EnsureDraft(SalesInvoice invoice)
