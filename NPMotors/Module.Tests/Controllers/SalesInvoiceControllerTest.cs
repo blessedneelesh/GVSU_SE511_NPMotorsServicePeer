@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Dapper;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
@@ -21,6 +22,10 @@ namespace Module.Tests.Controllers
         private readonly List<long> _vendorIds = new();
         private readonly List<long> _customerIds = new();
         private readonly List<long> _employeeIds = new();
+        // Only the CreateAndPost tests need a bank; it is created on first use and swept in DisposeAsync.
+        private long _bankId;
+        private long _accountId;
+        private long _inactiveAccountId;
 
         public Task InitializeAsync() => Task.CompletedTask;
 
@@ -28,11 +33,19 @@ namespace Module.Tests.Controllers
         {
             // Sweep by this run's unique marker (not by tracked ids), so rows a failed test never
             // tracked, such as a second invoice for the same vehicle, are removed too.
-            // Order follows the foreign keys: invoices, vehicles, vendors, customers, employees.
+            // Order follows the foreign keys: receipts and ledger rows, AR, invoices, vehicles, vendors,
+            // customers, employees, then the bank accounts and bank.
             using var connection = _repositoryContext.GetDatabaseConnection();
-            var pattern = new { Pattern = _marker + "%", VinPattern = _marker.ToUpperInvariant() + "%" };
+            var pattern = new { Pattern = _marker + "%", VinPattern = _marker.ToUpperInvariant() + "%", BankId = _bankId };
             const string markerVehicles =
                 "SELECT id FROM vehicle WHERE vendor_id IN (SELECT id FROM vendor WHERE name LIKE @Pattern) OR vin LIKE @VinPattern";
+            const string markerInvoices =
+                "SELECT id FROM sales_invoice WHERE vehicle_id IN (" + markerVehicles + ") OR customer_id IN (SELECT id FROM customer WHERE first_name LIKE @Pattern)";
+            const string markerAccounts = "SELECT id FROM bank_account WHERE bank_id = @BankId";
+            await connection.ExecuteAsync($"DELETE FROM bank_receipt WHERE bank_account_id IN ({markerAccounts})", pattern);
+            await connection.ExecuteAsync($"DELETE FROM bank_statement_line WHERE bank_account_id IN ({markerAccounts})", pattern);
+            await connection.ExecuteAsync($@"DELETE FROM ""transaction"" WHERE bank_account_id IN ({markerAccounts})", pattern);
+            await connection.ExecuteAsync($"DELETE FROM ar_invoice WHERE invoice_id IN ({markerInvoices})", pattern);
             await connection.ExecuteAsync(
                 $"UPDATE vehicle SET invoice_id = NULL WHERE id IN ({markerVehicles})", pattern);
             await connection.ExecuteAsync(
@@ -43,6 +56,8 @@ namespace Module.Tests.Controllers
             await connection.ExecuteAsync("DELETE FROM vendor WHERE name LIKE @Pattern", pattern);
             await connection.ExecuteAsync("DELETE FROM customer WHERE first_name LIKE @Pattern", pattern);
             await connection.ExecuteAsync("DELETE FROM employee WHERE first_name LIKE @Pattern", pattern);
+            await connection.ExecuteAsync("DELETE FROM bank_account WHERE bank_id = @BankId", pattern);
+            await connection.ExecuteAsync("DELETE FROM bank WHERE id = @BankId", pattern);
         }
 
         private async Task<long> CreateCustomerAsync(Status status = Status.Active)
@@ -650,6 +665,383 @@ namespace Module.Tests.Controllers
                 new StringContent("not json", Encoding.UTF8, "application/json"));
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        // ---- CreateAndPost: add the invoice and post it in one transaction ----
+        // Total: vehicle selling price 18000 + tax 1000 + fees 200 - discount 700 = 18500.
+
+        private const decimal CapTotal = 18500m;
+        private const decimal CapOpeningBalance = 500m;
+
+        private async Task EnsureBankAsync()
+        {
+            if (_bankId != 0)
+                return;
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            _bankId = await connection.ExecuteScalarAsync<long>(
+                "INSERT INTO bank (name) VALUES (@Name) RETURNING id", new { Name = $"{_marker} Bank" });
+            _accountId = await InsertAccountAsync("Operating", "active");
+            _inactiveAccountId = await InsertAccountAsync("Closed", "inactive");
+        }
+
+        private async Task<long> InsertAccountAsync(string name, string status)
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return await connection.ExecuteScalarAsync<long>(
+                @"INSERT INTO bank_account (bank_id, name, type, opening_balance, book_balance, status)
+                  VALUES (@BankId, @Name, 'Checking', @Balance, @Balance, @Status) RETURNING id",
+                new { BankId = _bankId, Name = $"{_marker} {name}", Balance = CapOpeningBalance, Status = status });
+        }
+
+        private Task<HttpResponseMessage> CreateAndPostAsync(object body) =>
+            _testClient.PostAsync("SalesInvoice/CreateAndPost", Json(body));
+
+        // The add-invoice fields and the post-invoice fields in one flat body, for a new customer,
+        // salesperson and vehicle.
+        private async Task<(JObject Body, long VehicleId)> CreateAndPostBodyAsync(object payment, Status customerStatus = Status.Active)
+        {
+            await EnsureBankAsync();
+            var dto = await ValidDtoAsync();
+            if (customerStatus != Status.Active)
+                dto.Customer_Id = await CreateCustomerAsync(customerStatus);
+
+            var body = JObject.FromObject(new
+            {
+                customer_Id = dto.Customer_Id, salesperson_Id = dto.Salesperson_Id, vehicle_Id = dto.Vehicle_Id,
+                invoice_Date = "2026-11-13", due_Date = "2026-12-13", tax = 1000, fees = 200, discount = 700
+            });
+            body.Merge(JObject.FromObject(payment));
+            return (body, dto.Vehicle_Id);
+        }
+
+        private object PaidInFullPayment(long? accountId = null, string method = "card") => new
+        {
+            paymentCondition = "paidInFull", amountReceived = CapTotal, paymentMethod = method,
+            reference = "REF-1", bankAccountId = accountId ?? _accountId, receiptDate = "2026-11-08"
+        };
+
+        private object PartialPayment(decimal amount = 6000m) => new
+        {
+            paymentCondition = "partialPayment", amountReceived = amount, paymentMethod = "transfer",
+            reference = "WIRE-77", bankAccountId = _accountId, receiptDate = "2026-11-08"
+        };
+
+        private static object CreditPayment() => new { paymentCondition = "credit", amountReceived = 0 };
+
+        private static async Task<JObject> ReadJsonAsync(HttpResponseMessage response) =>
+            JObject.Parse(await response.Content.ReadAsStringAsync());
+
+        private async Task<T> QueryAsync<T>(string sql, object param)
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return await connection.ExecuteScalarAsync<T>(sql, param) ?? default!;
+        }
+
+        private Task<decimal> BookBalanceAsync(long accountId) =>
+            QueryAsync<decimal>("SELECT book_balance FROM bank_account WHERE id = @Id", new { Id = accountId });
+
+        // A rejected request must leave no invoice at all (not even a Draft), and no receipt, AR or ledger rows.
+        private async Task AssertNothingSavedAsync(long vehicleId)
+        {
+            Assert.Equal(0, await QueryAsync<int>("SELECT COUNT(*) FROM sales_invoice WHERE vehicle_id = @Id", new { Id = vehicleId }));
+            Assert.Equal(0, await QueryAsync<int>(
+                "SELECT COUNT(*) FROM sales_invoice WHERE customer_id IN (SELECT id FROM customer WHERE first_name = @Marker)",
+                new { Marker = _marker }));
+            Assert.Equal("available", await QueryAsync<string>("SELECT LOWER(status) FROM vehicle WHERE id = @Id", new { Id = vehicleId }));
+            Assert.Equal(0, await QueryAsync<int>(
+                @"SELECT COUNT(*) FROM ""transaction"" WHERE bank_account_id IN (SELECT id FROM bank_account WHERE bank_id = @BankId)",
+                new { BankId = _bankId }));
+            Assert.Equal(CapOpeningBalance, await BookBalanceAsync(_accountId));
+        }
+
+        [Fact]
+        public async Task CreateAndPost_PaidInFull_Returns201WithPaidInvoiceAndReceiptButNoAr()
+        {
+            await EnsureBankAsync();
+            var (body, _) = await CreateAndPostBodyAsync(PaidInFullPayment());
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var created = (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+            Assert.True(created.Id > 0);
+            Assert.Equal(CapTotal, created.Total);
+            Assert.Equal(CapTotal, created.Paid);
+            Assert.Equal(0m, created.Balance);
+            Assert.Equal(PaymentStatus.Paid, created.Payment_Status);
+            Assert.Equal(InvoiceLifecycle.Posted, created.Lifecycle);
+            Assert.Null(created.Ar_Invoice_Id);
+            Assert.NotNull(created.Bank_Receipt_Id);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_Partial_Returns201WithPartialInvoiceArAndReceipt()
+        {
+            await EnsureBankAsync();
+            var (body, _) = await CreateAndPostBodyAsync(PartialPayment(6000m));
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var created = (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+            Assert.Equal(6000m, created.Paid);
+            Assert.Equal(12500m, created.Balance);
+            Assert.Equal(PaymentStatus.Partial, created.Payment_Status);
+            Assert.NotNull(created.Ar_Invoice_Id);
+            Assert.NotNull(created.Bank_Receipt_Id);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_Credit_Returns201WithUnpaidInvoiceArAndNoReceipt()
+        {
+            var (body, _) = await CreateAndPostBodyAsync(CreditPayment());
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var created = (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+            Assert.Equal(0m, created.Paid);
+            Assert.Equal(CapTotal, created.Balance);
+            Assert.Equal(PaymentStatus.Unpaid, created.Payment_Status);
+            Assert.NotNull(created.Ar_Invoice_Id);
+            Assert.Null(created.Bank_Receipt_Id);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_Returns201WithTheDocumentedFields()
+        {
+            await EnsureBankAsync();
+            var (body, _) = await CreateAndPostBodyAsync(PartialPayment());
+
+            var response = await CreateAndPostAsync(body);
+
+            var json = await ReadJsonAsync(response);
+            foreach (var name in new[] { "id", "number", "total", "paid", "balance", "payment_status", "lifecycle", "ar_invoice_id", "bank_receipt_id" })
+                Assert.NotNull(json.GetValue(name, StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("partial", json.GetValue("payment_status", StringComparison.OrdinalIgnoreCase)!.ToString());
+            Assert.Equal("posted", json.GetValue("lifecycle", StringComparison.OrdinalIgnoreCase)!.ToString());
+        }
+
+        [Fact]
+        public async Task CreateAndPost_Paid_SavesInvoiceVehicleAndRaisesTheBookBalance()
+        {
+            await EnsureBankAsync();
+            var (body, vehicleId) = await CreateAndPostBodyAsync(PaidInFullPayment());
+
+            var response = await CreateAndPostAsync(body);
+
+            var invoiceId = (await ReadAsync<SalesInvoiceResponseDto>(response))!.Id;
+            Assert.Equal("posted", await QueryAsync<string>("SELECT lifecycle FROM sales_invoice WHERE id = @Id", new { Id = invoiceId }));
+            Assert.Equal("sold", await QueryAsync<string>("SELECT LOWER(status) FROM vehicle WHERE id = @Id", new { Id = vehicleId }));
+            Assert.Equal(CapOpeningBalance + CapTotal, await BookBalanceAsync(_accountId));
+            Assert.Equal(1, await QueryAsync<int>("SELECT COUNT(*) FROM bank_receipt WHERE sales_invoice_id = @Id", new { Id = invoiceId }));
+        }
+
+        [Fact]
+        public async Task CreateAndPost_NeverLeavesADraftBehind()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(CreditPayment());
+
+            await CreateAndPostAsync(body);
+
+            Assert.Equal(0, await QueryAsync<int>(
+                "SELECT COUNT(*) FROM sales_invoice WHERE vehicle_id = @Id AND LOWER(lifecycle) = 'draft'", new { Id = vehicleId }));
+        }
+
+        [Theory]
+        [InlineData("cash")]
+        [InlineData("card")]
+        [InlineData("transfer")]
+        [InlineData("check")]
+        public async Task CreateAndPost_EachAllowedMethod_Returns201(string method)
+        {
+            await EnsureBankAsync();
+            var (body, _) = await CreateAndPostBodyAsync(PaidInFullPayment(method: method));
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_UnknownCustomer_Returns400AndSavesNothing()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(CreditPayment());
+            body["customer_Id"] = long.MaxValue;
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("Customer does not exist", (await ReadJsonAsync(response))["message"]!.ToString());
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_InactiveCustomer_Returns400AndSavesNothing()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(CreditPayment(), Status.Inactive);
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("active customers", (await ReadJsonAsync(response))["message"]!.ToString());
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_UnknownVehicle_Returns400()
+        {
+            var (body, _) = await CreateAndPostBodyAsync(CreditPayment());
+            body["vehicle_Id"] = long.MaxValue;
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("Vehicle does not exist", (await ReadJsonAsync(response))["message"]!.ToString());
+        }
+
+        [Fact]
+        public async Task CreateAndPost_NegativeTax_Returns400AndSavesNothing()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(CreditPayment());
+            body["tax"] = -1;
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_NegativeAmount_Returns400WithErrorsAndSavesNothing()
+        {
+            await EnsureBankAsync();
+            var (body, vehicleId) = await CreateAndPostBodyAsync(PartialPayment(-1m));
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var errors = (await ReadJsonAsync(response))["errors"]!.ToObject<string[]>()!;
+            Assert.Contains(errors, e => e.Contains("cannot be negative"));
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_AmountAboveTotal_Returns400AndSavesNothing()
+        {
+            await EnsureBankAsync();
+            var (body, vehicleId) = await CreateAndPostBodyAsync(new
+            {
+                paymentCondition = "paidInFull", amountReceived = CapTotal + 0.01m, paymentMethod = "card", bankAccountId = _accountId
+            });
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var errors = (await ReadJsonAsync(response))["errors"]!.ToObject<string[]>()!;
+            Assert.Contains(errors, e => e.Contains("cannot exceed the invoice total"));
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_PaidInFullWithPartialAmount_Returns400AndSavesNothing()
+        {
+            await EnsureBankAsync();
+            var (body, vehicleId) = await CreateAndPostBodyAsync(new
+            {
+                paymentCondition = "paidInFull", amountReceived = 6000, paymentMethod = "card", bankAccountId = _accountId
+            });
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_CreditWithAmount_Returns400AndSavesNothing()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(new { paymentCondition = "credit", amountReceived = 100 });
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_MissingPaymentMethodWithAmount_Returns400AndSavesNothing()
+        {
+            await EnsureBankAsync();
+            var (body, vehicleId) = await CreateAndPostBodyAsync(new
+            {
+                paymentCondition = "paidInFull", amountReceived = CapTotal, bankAccountId = _accountId
+            });
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_AmountWithoutBankAccount_Returns400AndSavesNothing()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(new
+            {
+                paymentCondition = "paidInFull", amountReceived = CapTotal, paymentMethod = "card"
+            });
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var errors = (await ReadJsonAsync(response))["errors"]!.ToObject<string[]>()!;
+            Assert.Contains(errors, e => e.Contains("bank account is required"));
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_InactiveBankAccount_Returns400AndSavesNothing()
+        {
+            await EnsureBankAsync();
+            var (body, vehicleId) = await CreateAndPostBodyAsync(PaidInFullPayment(accountId: _inactiveAccountId));
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var errors = (await ReadJsonAsync(response))["errors"]!.ToObject<string[]>()!;
+            Assert.Contains(errors, e => e.Contains("must be active"));
+            await AssertNothingSavedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_VehicleAlreadySold_Returns400AndCreatesNoSecondInvoice()
+        {
+            var (body, vehicleId) = await CreateAndPostBodyAsync(CreditPayment());
+            await CreateAndPostAsync(body);
+
+            var response = await CreateAndPostAsync(body);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(1, await QueryAsync<int>("SELECT COUNT(*) FROM sales_invoice WHERE vehicle_id = @Id", new { Id = vehicleId }));
+        }
+
+        [Fact]
+        public async Task CreateAndPost_NonJsonBody_Returns400()
+        {
+            var response = await _testClient.PostAsync("SalesInvoice/CreateAndPost",
+                new StringContent("not json", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task CreateAndPost_GetIsNotAllowed_Returns405()
+        {
+            var response = await _testClient.GetAsync("SalesInvoice/CreateAndPost");
+
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
         }
 
         [Theory]
