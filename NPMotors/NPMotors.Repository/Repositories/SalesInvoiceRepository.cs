@@ -125,6 +125,69 @@ namespace NPMotors.Repository.Repositories
             return created ?? throw new ArgumentException("The invoice could not be created because the customer, salesperson or vehicle is no longer eligible.");
         }
 
+        // Only a Draft can be edited. The row is locked first, so a concurrent post or cancel waits;
+        // a missing invoice returns null (404), a Posted or Cancelled one throws ConflictException (409),
+        // and an ineligible customer, salesperson or vehicle throws ArgumentException (400), changing nothing.
+        // The sale price is re-read from the vehicle, and total/balance are recalculated (a Draft has paid = 0).
+        public async Task<SalesInvoiceResponseDto?> UpdateDraftInvoice(long id, SalesInvoiceCreateDto invoice)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            try
+            {
+                var lifecycle = await connection.QuerySingleOrDefaultAsync<string?>(
+                    "SELECT LOWER(lifecycle) FROM sales_invoice WHERE id = @Id FOR UPDATE", new { Id = id }, tx);
+                if (lifecycle is null)
+                {
+                    tx.Rollback();
+                    return null;
+                }
+                if (lifecycle != InvoiceLifecycle.Draft.ToDbValue())
+                    throw new ConflictException("Only a Draft invoice can be edited.");
+
+                await ValidateSelectionAsync(connection, invoice, tx);
+
+                var updatedRows = await connection.ExecuteAsync(
+                    @"UPDATE sales_invoice si
+                      SET date = @InvoiceDate, customer_id = @CustomerId, salesperson_id = @SalespersonId, vehicle_id = @VehicleId,
+                          sale_price = v.selling_price, tax = @Tax, fees = @Fees, discount = @Discount,
+                          total = v.selling_price + @Tax + @Fees - @Discount,
+                          balance = v.selling_price + @Tax + @Fees - @Discount - si.paid, due_date = @DueDate
+                      FROM vehicle v
+                      WHERE si.id = @Id AND LOWER(si.lifecycle) = @Draft AND v.id = @VehicleId",
+                    new
+                    {
+                        Id = id,
+                        CustomerId = invoice.Customer_Id,
+                        SalespersonId = invoice.Salesperson_Id,
+                        VehicleId = invoice.Vehicle_Id,
+                        InvoiceDate = invoice.Invoice_Date.Date,
+                        DueDate = invoice.Due_Date?.Date,
+                        Tax = invoice.Tax,
+                        Fees = invoice.Fees,
+                        Discount = invoice.Discount,
+                        Draft = InvoiceLifecycle.Draft.ToDbValue()
+                    },
+                    tx);
+                if (updatedRows == 0)
+                    throw new ConflictException("The invoice is no longer a draft.");
+
+                var updated = await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
+                    $"SELECT {BrowseColumns} {BrowseFrom} WHERE si.id = @Id", new { Id = id }, tx);
+
+                tx.Commit();
+                return updated;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
         public async Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();

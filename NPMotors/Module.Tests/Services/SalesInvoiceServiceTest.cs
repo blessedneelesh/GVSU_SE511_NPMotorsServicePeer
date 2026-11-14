@@ -89,6 +89,7 @@ namespace Module.Tests.Services
                 });
             }
 
+            public Task<SalesInvoiceResponseDto?> UpdateDraftInvoice(long id, SalesInvoiceCreateDto invoice) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx) => throw new NotSupportedException();
 
             public Task<SalesInvoice?> GetInvoiceById(long id, IDbTransaction tx) => throw new NotSupportedException();

@@ -1044,6 +1044,224 @@ namespace Module.Tests.Controllers
             Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
         }
 
+        // ---- UpdateDraft: edit a Draft with the add-invoice fields ----
+        // Total: vehicle selling price 18000 + tax + fees - discount.
+
+        private Task<HttpResponseMessage> UpdateDraftAsync(object id, object? body) =>
+            _testClient.PutAsync($"SalesInvoice/UpdateDraft?id={id}", Json(body));
+
+        private async Task<(string Lifecycle, long CustomerId, long VehicleId, decimal Tax, decimal Total, decimal Balance)> InvoiceRowAsync(long id)
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return await connection.QuerySingleAsync<(string, long, long, decimal, decimal, decimal)>(
+                "SELECT lifecycle, customer_id, vehicle_id, tax, total, balance FROM sales_invoice WHERE id = @Id", new { Id = id });
+        }
+
+        [Fact]
+        public async Task UpdateDraft_Valid_Returns200WithTheEditedDraft()
+        {
+            var draft = await NewDraftAsync();
+            var edit = await ValidDtoAsync();
+            edit.Tax = 2000m;
+            edit.Fees = 100m;
+            edit.Discount = 300m;
+
+            var response = await UpdateDraftAsync(draft.Id, edit);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+            Assert.Equal(draft.Id, body.Id);
+            Assert.Equal(draft.Number, body.Number);
+            Assert.Equal(InvoiceLifecycle.Draft, body.Lifecycle);
+            Assert.Equal(edit.Customer_Id, body.Customer_Id);
+            Assert.Equal(edit.Vehicle_Id, body.Vehicle_Id);
+            Assert.Equal(2000m, body.Tax);
+            Assert.Equal(19800m, body.Total);
+            Assert.Equal(0m, body.Paid);
+            Assert.Equal(19800m, body.Balance);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_Valid_SavesTheEditAndKeepsItADraft()
+        {
+            var draft = await NewDraftAsync();
+            var edit = await ValidDtoAsync();
+            edit.Tax = 2000m;
+
+            await UpdateDraftAsync(draft.Id, edit);
+
+            var row = await InvoiceRowAsync(draft.Id);
+            Assert.Equal("draft", row.Lifecycle);
+            Assert.Equal(edit.Customer_Id, row.CustomerId);
+            Assert.Equal(edit.Vehicle_Id, row.VehicleId);
+            Assert.Equal(2000m, row.Tax);
+            Assert.Equal(row.Total, row.Balance);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_DoesNotMarkTheVehicleSold()
+        {
+            var draft = await NewDraftAsync();
+            var edit = await ValidDtoAsync();
+
+            await UpdateDraftAsync(draft.Id, edit);
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            Assert.Equal("available", await connection.ExecuteScalarAsync<string>(
+                "SELECT LOWER(status) FROM vehicle WHERE id = @Id", new { Id = edit.Vehicle_Id }));
+        }
+
+        [Fact]
+        public async Task UpdateDraft_AcceptsTheCreateAndPostBodyAndIgnoresThePaymentFields()
+        {
+            await EnsureBankAsync();
+            var draft = await NewDraftAsync();
+            var (body, _) = await CreateAndPostBodyAsync(PaidInFullPayment());
+
+            var response = await UpdateDraftAsync(draft.Id, body);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var updated = (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+            Assert.Equal(InvoiceLifecycle.Draft, updated.Lifecycle);
+            Assert.Equal(0m, updated.Paid);
+            Assert.Equal(0, await QueryAsync<int>("SELECT COUNT(*) FROM bank_receipt WHERE sales_invoice_id = @Id", new { Id = draft.Id }));
+            Assert.Equal(CapOpeningBalance, await BookBalanceAsync(_accountId));
+        }
+
+        [Fact]
+        public async Task UpdateDraft_UnknownId_Returns404()
+        {
+            var response = await UpdateDraftAsync(long.MaxValue, await ValidDtoAsync());
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_PostedInvoice_Returns409AndChangesNothing()
+        {
+            var posted = await NewPostedAsync();
+            var before = await InvoiceRowAsync(posted.Id);
+            var edit = await ValidDtoAsync();
+            edit.Tax = 9999m;
+
+            var response = await UpdateDraftAsync(posted.Id, edit);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Contains("Draft", (await ReadJsonAsync(response))["message"]!.ToString());
+            Assert.Equal(before, await InvoiceRowAsync(posted.Id));
+        }
+
+        [Fact]
+        public async Task UpdateDraft_CancelledInvoice_Returns409()
+        {
+            var posted = await NewPostedAsync();
+            await CancelAsync(posted.Id.ToString(), new { reason = "test" });
+
+            var response = await UpdateDraftAsync(posted.Id, await ValidDtoAsync());
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_InactiveCustomer_Returns400AndChangesNothing()
+        {
+            var draft = await NewDraftAsync();
+            var before = await InvoiceRowAsync(draft.Id);
+            var edit = await ValidDtoAsync();
+            edit.Customer_Id = await CreateCustomerAsync(Status.Inactive);
+
+            var response = await UpdateDraftAsync(draft.Id, edit);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("active customers", (await ReadJsonAsync(response))["message"]!.ToString());
+            Assert.Equal(before, await InvoiceRowAsync(draft.Id));
+        }
+
+        [Fact]
+        public async Task UpdateDraft_VehicleNotAvailable_Returns400AndChangesNothing()
+        {
+            var draft = await NewDraftAsync();
+            var before = await InvoiceRowAsync(draft.Id);
+            var edit = await ValidDtoAsync("sold");
+
+            var response = await UpdateDraftAsync(draft.Id, edit);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(before, await InvoiceRowAsync(draft.Id));
+        }
+
+        [Theory]
+        [InlineData("tax")]
+        [InlineData("fees")]
+        [InlineData("discount")]
+        public async Task UpdateDraft_NegativeAmount_Returns400(string field)
+        {
+            var draft = await NewDraftAsync();
+            var edit = JObject.FromObject(await ValidDtoAsync());
+            edit[char.ToUpper(field[0]) + field[1..]] = -1;
+
+            var response = await UpdateDraftAsync(draft.Id, edit);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_MissingRequiredIds_Returns400()
+        {
+            var draft = await NewDraftAsync();
+
+            var response = await UpdateDraftAsync(draft.Id, new { invoice_Date = "2026-05-01" });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_NonNumericId_Returns400()
+        {
+            var response = await UpdateDraftAsync("abc", await ValidDtoAsync());
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_NonJsonBody_Returns400()
+        {
+            var draft = await NewDraftAsync();
+
+            var response = await _testClient.PutAsync($"SalesInvoice/UpdateDraft?id={draft.Id}",
+                new StringContent("not json", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_PostIsNotAllowed_Returns405()
+        {
+            var draft = await NewDraftAsync();
+
+            var response = await _testClient.PostAsync($"SalesInvoice/UpdateDraft?id={draft.Id}", Json(await ValidDtoAsync()));
+
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task UpdateDraft_ThenPostInvoice_PostsTheEditedDraft()
+        {
+            await EnsureBankAsync();
+            var draft = await NewDraftAsync();
+            var edit = await ValidDtoAsync();
+            edit.Tax = 1000m; edit.Fees = 200m; edit.Discount = 700m;
+            await UpdateDraftAsync(draft.Id, edit);
+
+            var response = await _testClient.PostAsync($"SalesInvoice/PostInvoice?id={draft.Id}", Json(PaidInFullPayment()));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var posted = (await ReadAsync<SalesInvoiceResponseDto>(response))!;
+            Assert.Equal(CapTotal, posted.Total);
+            Assert.Equal(edit.Vehicle_Id, posted.Vehicle_Id);
+            Assert.Equal(InvoiceLifecycle.Posted, posted.Lifecycle);
+        }
+
         [Theory]
         [InlineData("PUT", "SalesInvoice/UpdateSalesInvoice?id=1")]
         [InlineData("DELETE", "SalesInvoice/DeleteSalesInvoice?id=1")]

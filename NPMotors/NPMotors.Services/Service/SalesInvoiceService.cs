@@ -59,6 +59,20 @@ namespace NPMotors.Services.Service
             return created;
         }
 
+        // Edits a Draft with the add-invoice fields; payment fields are not stored on a draft.
+        public async Task<SalesInvoiceResponseDto?> UpdateDraft(long id, SalesInvoiceCreateDto invoice)
+        {
+            ValidateInvoice(invoice);
+
+            var updated = await _salesInvoiceRepository.UpdateDraftInvoice(id, invoice);
+            if (updated is null)
+                return null;
+
+            updated.Total = CalculateTotal(updated.Sale_Price, updated.Tax, updated.Fees, updated.Discount);
+            updated.Balance = CalculateBalance(updated.Total, updated.Paid);
+            return updated;
+        }
+
         public async Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
         {
             ValidateInvoice(invoice);

@@ -12,6 +12,7 @@ namespace NPMotors.Repository.Interface
     {
         Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice);
         Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx);
+        Task<SalesInvoiceResponseDto?> UpdateDraftInvoice(long id, SalesInvoiceCreateDto invoice);
         Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice);
         Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters);
         Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id);

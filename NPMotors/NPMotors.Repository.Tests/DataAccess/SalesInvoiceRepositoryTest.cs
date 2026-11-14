@@ -1,5 +1,6 @@
 using System.Data;
 using Dapper;
+using NPMotors.Repository.Exceptions;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.RequestFeatures;
@@ -566,6 +567,136 @@ namespace NPMotors.Repository.Tests.DataAccess
             var invoice = await _repository.GetInvoiceById(long.MaxValue);
 
             Assert.Null(invoice);
+        }
+
+        // ---- UpdateDraftInvoice: only a Draft can be edited ----
+
+        [Fact]
+        public async Task UpdateDraftInvoice_Draft_ReturnsEditedInvoiceWithRecalculatedSalePriceAndStaysDraft()
+        {
+            var draft = await AddAsync(await ValidDtoAsync());
+            var edit = await ValidDtoAsync("2");
+            edit.Tax = 2000m;
+            edit.Fees = 100m;
+            edit.Discount = 300m;
+            edit.Due_Date = new DateTime(2026, 6, 30);
+
+            var updated = await _repository.UpdateDraftInvoice(draft.Id, edit);
+
+            Assert.NotNull(updated);
+            Assert.Equal(draft.Id, updated!.Id);
+            Assert.Equal(draft.Number, updated.Number);
+            Assert.Equal(InvoiceLifecycle.Draft, updated.Lifecycle);
+            Assert.Equal(edit.Customer_Id, updated.Customer_Id);
+            Assert.Equal(edit.Vehicle_Id, updated.Vehicle_Id);
+            Assert.Equal(new DateTime(2026, 6, 30), updated.Due_Date);
+            Assert.Equal(25000m, updated.Sale_Price); // vehicle.selling_price
+            Assert.Equal(2000m, updated.Tax);
+            Assert.Equal(100m, updated.Fees);
+            Assert.Equal(300m, updated.Discount);
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_StoresTotalAndBalanceAndKeepsDraftState()
+        {
+            var draft = await AddAsync(await ValidDtoAsync());
+            var edit = await ValidDtoAsync("2");
+            edit.Tax = 2000m;
+            edit.Fees = 100m;
+            edit.Discount = 300m;
+
+            await _repository.UpdateDraftInvoice(draft.Id, edit);
+
+            var invoice = await _repository.GetInvoiceById(draft.Id);
+            Assert.Equal(26800m, invoice!.Total); // 25000 + 2000 + 100 - 300
+            Assert.Equal(0m, invoice.Paid);
+            Assert.Equal(26800m, invoice.Balance);
+            Assert.Null(invoice.PaymentStatus);
+            Assert.Equal(InvoiceLifecycle.Draft.ToDbValue(), invoice.Lifecycle);
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_DoesNotChangeEitherVehicle()
+        {
+            var original = await ValidDtoAsync();
+            var draft = await AddAsync(original);
+            var edit = await ValidDtoAsync("2");
+
+            await _repository.UpdateDraftInvoice(draft.Id, edit);
+
+            foreach (var vehicleId in new[] { original.Vehicle_Id, edit.Vehicle_Id })
+            {
+                var vehicle = await _vehicleRepository.GetVehicleById(vehicleId);
+                Assert.Equal(VehicleStatus.Available, vehicle!.Status);
+            }
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_UnknownId_ReturnsNull()
+        {
+            var updated = await _repository.UpdateDraftInvoice(long.MaxValue, await ValidDtoAsync());
+
+            Assert.Null(updated);
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_PostedInvoice_ThrowsConflictAndChangesNothing()
+        {
+            var posted = await PostAsync(await ValidDtoAsync());
+            var edit = await ValidDtoAsync("2");
+            edit.Tax = 9999m;
+
+            var ex = await Assert.ThrowsAsync<ConflictException>(() => _repository.UpdateDraftInvoice(posted.Id, edit));
+
+            Assert.Contains("Draft", ex.Message);
+            var invoice = await _repository.GetInvoiceById(posted.Id);
+            Assert.Equal(InvoiceLifecycle.Posted.ToDbValue(), invoice!.Lifecycle);
+            Assert.Equal(posted.Customer_Id, invoice.CustomerId);
+            Assert.Equal(posted.Vehicle_Id, invoice.VehicleId);
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_InactiveCustomer_ThrowsAndChangesNothing()
+        {
+            var original = await ValidDtoAsync();
+            var draft = await AddAsync(original);
+            var edit = await ValidDtoAsync("2");
+            edit.Customer_Id = await CreateCustomerAsync(Status.Inactive);
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.UpdateDraftInvoice(draft.Id, edit));
+
+            Assert.Equal("Only active customers can be selected.", ex.Message);
+            var invoice = await _repository.GetInvoiceById(draft.Id);
+            Assert.Equal(original.Customer_Id, invoice!.CustomerId);
+            Assert.Equal(original.Vehicle_Id, invoice.VehicleId);
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_VehicleNotAvailable_ThrowsAndChangesNothing()
+        {
+            var original = await ValidDtoAsync();
+            var draft = await AddAsync(original);
+            var edit = await ValidDtoAsync("2");
+            using (IDbConnection connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync("UPDATE vehicle SET status = 'sold' WHERE id = @Id", new { Id = edit.Vehicle_Id });
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _repository.UpdateDraftInvoice(draft.Id, edit));
+
+            Assert.Equal("Only available vehicles can be selected.", ex.Message);
+            Assert.Equal(original.Vehicle_Id, (await _repository.GetInvoiceById(draft.Id))!.VehicleId);
+        }
+
+        [Fact]
+        public async Task UpdateDraftInvoice_SameVehicleAsBefore_IsAllowed()
+        {
+            var original = await ValidDtoAsync();
+            var draft = await AddAsync(original);
+            original.Tax = 10m;
+
+            var updated = await _repository.UpdateDraftInvoice(draft.Id, original);
+
+            Assert.Equal(original.Vehicle_Id, updated!.Vehicle_Id);
+            Assert.Equal(10m, updated.Tax);
         }
 
         // ---- PostSalesInvoice ----
