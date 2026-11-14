@@ -89,15 +89,15 @@ namespace NPMotors.Repository.Repositories
               JOIN sales_invoice si ON si.id = ar.invoice_id
               JOIN customer c ON c.id = si.customer_id";
 
-        // Open AR (balance > 0) by default. Overdue = past due date; Unpaid/Partial = stored status and not past due;
-        // Paid = fully settled AR (balance = 0), which is otherwise left out.
+        // No status = every AR row, paid included. Overdue = open and past due date; Unpaid/Partial = stored status
+        // and not past due; Paid = fully settled AR (balance <= 0).
         public async Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
 
             var asOfDate = (parameters.AsOfDate ?? DateTime.Today).Date;
             var status = parameters.Status?.Trim().ToLowerInvariant();
-            var whereClauses = new List<string> { status == "paid" ? "ar.balance <= 0" : "ar.balance > 0" };
+            var whereClauses = new List<string>();
             var queryParams = new DynamicParameters();
             queryParams.Add("AsOfDate", asOfDate, DbType.Date);
 
@@ -109,7 +109,12 @@ namespace NPMotors.Repository.Repositories
 
             if (status == "overdue")
             {
+                whereClauses.Add("ar.balance > 0");
                 whereClauses.Add("ar.due_date < @AsOfDate");
+            }
+            else if (status == "paid")
+            {
+                whereClauses.Add("ar.balance <= 0");
             }
             else if (status == "unpaid" || status == "partial")
             {
@@ -118,7 +123,7 @@ namespace NPMotors.Repository.Repositories
                 queryParams.Add("Status", status);
             }
 
-            var whereSql = " WHERE " + string.Join(" AND ", whereClauses);
+            var whereSql = whereClauses.Count > 0 ? " WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
 
             var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {AgingFrom}{whereSql}", queryParams);
 

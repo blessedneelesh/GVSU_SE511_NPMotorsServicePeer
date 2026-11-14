@@ -10,7 +10,7 @@ namespace Module.Tests.Controllers
 {
     // GET /Ar/GetAllAr (Story 17) against the test database. As-of date: 2026-11-08.
     // Customer Alpha: A1 due 2026-10-01 unpaid 1000 (38 days overdue), A2 due 2026-10-15 partial 1000/400 (24 days),
-    //                 A3 due 2026-12-01 unpaid 1000 (0 days, not overdue), A6 fully paid (never listed).
+    //                 A3 due 2026-12-01 unpaid 1000 (0 days, not overdue), A6 fully paid (listed only with no status or Paid).
     // Customer Beta:  B1 due 2026-10-20 unpaid 500 (19 days overdue).
     public class ArControllerTest : TestBase, IAsyncLifetime
     {
@@ -116,11 +116,11 @@ namespace Module.Tests.Controllers
             var (response, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(3, Items(json).Count);
+            Assert.Equal(4, Items(json).Count);
             var meta = Prop(json, "metaData");
             foreach (var name in new[] { "currentPage", "totalPages", "pageSize", "totalCount" })
                 Assert.NotNull(((JObject)meta).GetValue(name, StringComparison.OrdinalIgnoreCase));
-            Assert.Equal(3, (int)Prop(meta, "totalCount"));
+            Assert.Equal(4, (int)Prop(meta, "totalCount"));
         }
 
         [Fact]
@@ -190,11 +190,11 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetAllAr_PaidArIsNotListed()
+        public async Task GetAllAr_NoStatus_ListsPaidArToo()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
-            Assert.DoesNotContain(Items(json), i => Prop(i, "number").ToString() == Number("A6"));
+            Assert.Contains(Items(json), i => Prop(i, "number").ToString() == Number("A6"));
         }
 
         [Fact]
@@ -262,10 +262,10 @@ namespace Module.Tests.Controllers
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&PageNumber=2&PageSize=2");
 
             var meta = Prop(json, "metaData");
-            Assert.Equal(Number("A3"), Prop(Assert.Single(Items(json)), "number").ToString());
+            Assert.Equal(new[] { Number("A2"), Number("A3") }, Items(json).Select(i => Prop(i, "number").ToString()).ToArray());
             Assert.Equal(2, (int)Prop(meta, "currentPage"));
             Assert.Equal(2, (int)Prop(meta, "pageSize"));
-            Assert.Equal(3, (int)Prop(meta, "totalCount"));
+            Assert.Equal(4, (int)Prop(meta, "totalCount"));
             Assert.Equal(2, (int)Prop(meta, "totalPages"));
         }
 

@@ -14,7 +14,7 @@ namespace NPMotors.Repository.Tests.DataAccess
     //   A3  due later                              2026-12-01  1000   0     1000    unpaid
     //   A4  due on the as-of date                  2026-11-08  1000   300   700     partial
     //   A5  no due date                            NULL        1000   0     1000    unpaid
-    //   A6  fully paid (balance 0)                 2026-09-01  1000   1000  0       paid     -> never listed
+    //   A6  fully paid (balance 0)                 2026-09-01  1000   1000  0       paid     -> listed only with no status or Paid
     //   A7  due later, same date as A3, lower no.  2026-12-01  1000   0     1000    unpaid
     // Customer Beta (B) row:
     //   B1  past due                               2026-10-20  500    0     500     unpaid   -> Overdue
@@ -120,16 +120,15 @@ namespace NPMotors.Repository.Tests.DataAccess
         private static string[] Keys(PagedList<ArAgingDto> page, string marker) =>
             page.Select(i => i.Number.Substring(marker.Length + 1)).ToArray();
 
-        // ---- Open AR only ----
+        // ---- No status = every AR row, paid included ----
 
         [Fact]
-        public async Task GetAllAr_ListsOnlyOpenBalances_PaidArIsLeftOut()
+        public async Task GetAllAr_NoStatus_IncludesPaidAr()
         {
             var page = await GetAsync(_alphaId);
 
-            Assert.DoesNotContain(page, i => i.Number == Number("A6"));
-            Assert.All(page, i => Assert.True(i.Balance > 0));
-            Assert.Equal(6, page.Count);
+            Assert.Contains(page, i => i.Number == Number("A6") && i.Balance == 0);
+            Assert.Equal(7, page.Count);
         }
 
         [Theory]
@@ -270,15 +269,15 @@ namespace NPMotors.Repository.Tests.DataAccess
         {
             var page = await GetAsync(_alphaId, status);
 
-            Assert.Equal(6, page.Count);
+            Assert.Equal(7, page.Count);
         }
 
         [Fact]
-        public async Task GetAllAr_NullStatus_ReturnsAllOpenRows()
+        public async Task GetAllAr_NullStatus_ReturnsAllRowsIncludingPaid()
         {
             var page = await GetAsync(_alphaId, null);
 
-            Assert.Equal(6, page.Count);
+            Assert.Equal(7, page.Count);
         }
 
         [Fact]
@@ -348,7 +347,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         {
             var page = await GetAsync(_alphaId);
 
-            Assert.Equal(new[] { "A1", "A2", "A4", "A0", "A3", "A5" }, Keys(page, _marker));
+            Assert.Equal(new[] { "A6", "A1", "A2", "A4", "A0", "A3", "A5" }, Keys(page, _marker));
         }
 
         [Fact]
@@ -356,11 +355,11 @@ namespace NPMotors.Repository.Tests.DataAccess
         {
             var page = await GetAsync(_alphaId, pageNumber: 2, pageSize: 2);
 
-            Assert.Equal(new[] { "A4", "A0" }, Keys(page, _marker));
-            Assert.Equal(6, page.MetaData.TotalCount);
+            Assert.Equal(new[] { "A2", "A4" }, Keys(page, _marker));
+            Assert.Equal(7, page.MetaData.TotalCount);
             Assert.Equal(2, page.MetaData.CurrentPage);
             Assert.Equal(2, page.MetaData.PageSize);
-            Assert.Equal(3, page.MetaData.TotalPages);
+            Assert.Equal(4, page.MetaData.TotalPages);
         }
 
         [Fact]
@@ -369,7 +368,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             var page = await GetAsync(_alphaId, pageNumber: 5, pageSize: 2);
 
             Assert.Empty(page);
-            Assert.Equal(6, page.MetaData.TotalCount);
+            Assert.Equal(7, page.MetaData.TotalCount);
         }
 
         [Fact]
