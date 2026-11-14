@@ -5,6 +5,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
 {
     public interface IArService
     {
-        Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters);
+        Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters);
     }
 }

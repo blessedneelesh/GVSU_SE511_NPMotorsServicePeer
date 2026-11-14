@@ -11,6 +11,6 @@ namespace NPMotors.Repository.Interface
         Task<ArInvoice?> GetArInvoiceById(long id);
         Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx);
         Task<int> CloseArInvoice(long invoiceId, IDbTransaction tx);
-        Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters);
+        Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters);
     }
 }

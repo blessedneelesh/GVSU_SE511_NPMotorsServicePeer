@@ -16,12 +16,12 @@ namespace NPMotors.Services.Service
             _arInvoiceRepository = arInvoiceRepository;
         }
 
-        public async Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters)
+        public async Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters)
         {
             parameters.AsOfDate ??= DateTime.Today;
             var asOfDate = parameters.AsOfDate.Value;
 
-            var items = await _arInvoiceRepository.GetArAging(parameters);
+            var items = await _arInvoiceRepository.GetAllAr(parameters);
             foreach (var item in items)
             {
                 item.Days_Overdue = CalculateDaysOverdue(item.Due_Date, asOfDate);

@@ -163,7 +163,7 @@ namespace Module.Tests.Services
             public Task<long> InsertArInvoice(NPMotors.Repository.Models.ArInvoice arInvoice, System.Data.IDbTransaction tx) => throw new NotSupportedException();
             public Task<NPMotors.Repository.Models.ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
             public Task<int> UpdateArPayment(NPMotors.Repository.Models.ArInvoice ar, decimal expectedBalance, System.Data.IDbTransaction tx) => throw new NotSupportedException();
-            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetArAging(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetAllAr(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
         }
 
         private readonly FakeSalesInvoiceRepository _repository = new();

@@ -172,7 +172,7 @@ namespace Module.Tests.Services
             public Task<ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
             public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx) => throw new NotSupportedException();
 
-            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetArAging(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetAllAr(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
 
             public Task<long> InsertArInvoice(ArInvoice arInvoice, IDbTransaction tx)
             {

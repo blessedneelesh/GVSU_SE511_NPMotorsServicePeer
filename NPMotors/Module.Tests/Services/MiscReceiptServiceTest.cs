@@ -80,7 +80,7 @@ namespace Module.Tests.Services
 
             public Task<int> CloseArInvoice(long invoiceId, IDbTransaction tx) { _log.Add("ar-close"); return Task.FromResult(0); }
             public Task<ArInvoice?> GetArInvoiceById(long id) { _log.Add("ar-get"); return Task.FromResult<ArInvoice?>(null); }
-            public Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters) { _log.Add("ar-aging"); throw new NotSupportedException(); }
+            public Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters) { _log.Add("ar-aging"); throw new NotSupportedException(); }
             public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx) { _log.Add("ar-update"); return Task.FromResult(0); }
             public Task<long> InsertArInvoice(ArInvoice arInvoice, IDbTransaction tx) { _log.Add("ar-insert"); return Task.FromResult(0L); }
         }

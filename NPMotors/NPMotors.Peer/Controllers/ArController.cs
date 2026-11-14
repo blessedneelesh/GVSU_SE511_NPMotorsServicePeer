@@ -16,9 +16,9 @@ namespace NPMotors.Peer.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetArAging([FromQuery] ArAgingParameters parameters)
+        public async Task<IActionResult> GetAllAr([FromQuery] ArAgingParameters parameters)
         {
-            var items = await _arService.GetArAging(parameters);
+            var items = await _arService.GetAllAr(parameters);
             return Ok(new { items, metaData = items.MetaData });
         }
     }

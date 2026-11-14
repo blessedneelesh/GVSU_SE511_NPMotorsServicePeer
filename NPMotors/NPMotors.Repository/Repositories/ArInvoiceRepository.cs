@@ -89,13 +89,15 @@ namespace NPMotors.Repository.Repositories
               JOIN sales_invoice si ON si.id = ar.invoice_id
               JOIN customer c ON c.id = si.customer_id";
 
-        // Open AR only (balance > 0). Overdue = past due date; Unpaid/Partial = stored status and not past due.
-        public async Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters)
+        // Open AR (balance > 0) by default. Overdue = past due date; Unpaid/Partial = stored status and not past due;
+        // Paid = fully settled AR (balance = 0), which is otherwise left out.
+        public async Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
 
             var asOfDate = (parameters.AsOfDate ?? DateTime.Today).Date;
-            var whereClauses = new List<string> { "ar.balance > 0" };
+            var status = parameters.Status?.Trim().ToLowerInvariant();
+            var whereClauses = new List<string> { status == "paid" ? "ar.balance <= 0" : "ar.balance > 0" };
             var queryParams = new DynamicParameters();
             queryParams.Add("AsOfDate", asOfDate, DbType.Date);
 
@@ -105,7 +107,6 @@ namespace NPMotors.Repository.Repositories
                 queryParams.Add("CustomerId", parameters.CustomerId.Value);
             }
 
-            var status = parameters.Status?.Trim().ToLowerInvariant();
             if (status == "overdue")
             {
                 whereClauses.Add("ar.due_date < @AsOfDate");
