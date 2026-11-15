@@ -21,5 +21,12 @@ namespace NPMotors.Peer.Controllers
             var items = await _arService.GetAllAr(parameters);
             return Ok(new { items, metaData = items.MetaData });
         }
+
+        [HttpGet]
+        public async Task<IActionResult> GetArById([FromQuery] long id)
+        {
+            var ar = await _arService.GetArById(id);
+            return ar is null ? NotFound() : Ok(ar);
+        }
     }
 }

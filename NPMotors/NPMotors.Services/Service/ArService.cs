@@ -30,6 +30,14 @@ namespace NPMotors.Services.Service
             return items;
         }
 
+        public async Task<ArDetailDto?> GetArById(long id)
+        {
+            var ar = await _arInvoiceRepository.GetArById(id);
+            if (ar is not null)
+                ar.Days = CalculateDaysOverdue(ar.DueDate, DateTime.Today);
+            return ar;
+        }
+
         // max(0, (asOfDate - dueDate).Days); 0 when dueDate is null.
         private static int CalculateDaysOverdue(DateTime? dueDate, DateTime asOfDate)
         {

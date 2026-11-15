@@ -141,5 +141,24 @@ namespace NPMotors.Repository.Repositories
 
             return new PagedList<ArAgingDto>(items, count, parameters.PageNumber, parameters.PageSize);
         }
+
+        // One AR row with its sales invoice (total, date) and customer (name, phone, email, address); null when not found.
+        public async Task<ArDetailDto?> GetArById(long id)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<ArDetailDto>(
+                @"SELECT ar.id AS Id, ar.invoice_id AS InvoiceId, ar.number AS Number,
+                         CONCAT_WS(' ', c.first_name, c.last_name) AS Customer,
+                         ar.date AS Date, ar.due_date AS DueDate,
+                         ar.amount AS Amount, ar.paid AS Paid, ar.balance AS Balance, ar.status AS Status,
+                         si.total AS Invoice_Total, si.date AS Invoice_Date,
+                         c.phone AS Phone, c.email AS Email, c.address AS Address
+                  FROM ar_invoice ar
+                  JOIN sales_invoice si ON si.id = ar.invoice_id
+                  JOIN customer c ON c.id = si.customer_id
+                  WHERE ar.id = @Id",
+                new { Id = id });
+        }
     }
 }
