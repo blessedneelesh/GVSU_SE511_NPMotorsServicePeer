@@ -277,10 +277,12 @@ namespace NPMotors.Repository.Repositories
               v.vin, v.make, v.model, v.status AS Vehicle_Status,
               COALESCE(v.selling_price, 0) AS Selling_Price, COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost,
               COALESCE(si.sale_price, 0) AS Sale_Price, si.tax, si.fees, si.discount, si.paid,
-              si.lifecycle AS Lifecycle, si.payment_status AS Payment_Status, si.cancel_reason AS Cancel_Reason";
+               si.lifecycle AS Lifecycle, si.payment_status AS Payment_Status, si.cancel_reason AS Cancel_Reason,
+               ar.id AS Ar_Invoice_Id";
 
         private const string BrowseFrom =
-            "FROM sales_invoice si JOIN customer c ON c.id = si.customer_id JOIN vehicle v ON v.id = si.vehicle_id";
+            "FROM sales_invoice si JOIN customer c ON c.id = si.customer_id JOIN vehicle v ON v.id = si.vehicle_id " +
+            "LEFT JOIN ar_invoice ar ON ar.invoice_id = si.id";
 
         // Cancelled invoices are included unless the Lifecycle filter says otherwise.
         public async Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters)
