@@ -68,8 +68,18 @@ namespace NPMotors.Repository.Repositories
         public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
+            return await InsertDraftAsync(connection, invoice, null);
+        }
 
-            await ValidateSelectionAsync(connection, invoice);
+        // Runs inside the caller's transaction (create-and-post); the service commits or rolls back.
+        public async Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx)
+        {
+            return await InsertDraftAsync(tx.Connection!, invoice, tx);
+        }
+
+        private static async Task<SalesInvoiceResponseDto> InsertDraftAsync(IDbConnection connection, SalesInvoiceCreateDto invoice, IDbTransaction? tx)
+        {
+            await ValidateSelectionAsync(connection, invoice, tx);
 
             var queryParams = new DynamicParameters();
             queryParams.Add("CustomerId", invoice.Customer_Id);
@@ -110,9 +120,72 @@ namespace NPMotors.Repository.Repositories
                           COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost, ins.sale_price AS Sale_Price,
                           ins.tax, ins.fees, ins.discount, ins.paid, ins.lifecycle AS Lifecycle, ins.payment_status AS Payment_Status
                    FROM ins JOIN vehicle v ON v.id = ins.vehicle_id",
-                queryParams);
+                queryParams, tx);
 
             return created ?? throw new ArgumentException("The invoice could not be created because the customer, salesperson or vehicle is no longer eligible.");
+        }
+
+        // Only a Draft can be edited. The row is locked first, so a concurrent post or cancel waits;
+        // a missing invoice returns null (404), a Posted or Cancelled one throws ConflictException (409),
+        // and an ineligible customer, salesperson or vehicle throws ArgumentException (400), changing nothing.
+        // The sale price is re-read from the vehicle, and total/balance are recalculated (a Draft has paid = 0).
+        public async Task<SalesInvoiceResponseDto?> UpdateDraftInvoice(long id, SalesInvoiceCreateDto invoice)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            try
+            {
+                var lifecycle = await connection.QuerySingleOrDefaultAsync<string?>(
+                    "SELECT LOWER(lifecycle) FROM sales_invoice WHERE id = @Id FOR UPDATE", new { Id = id }, tx);
+                if (lifecycle is null)
+                {
+                    tx.Rollback();
+                    return null;
+                }
+                if (lifecycle != InvoiceLifecycle.Draft.ToDbValue())
+                    throw new ConflictException("Only a Draft invoice can be edited.");
+
+                await ValidateSelectionAsync(connection, invoice, tx);
+
+                var updatedRows = await connection.ExecuteAsync(
+                    @"UPDATE sales_invoice si
+                      SET date = @InvoiceDate, customer_id = @CustomerId, salesperson_id = @SalespersonId, vehicle_id = @VehicleId,
+                          sale_price = v.selling_price, tax = @Tax, fees = @Fees, discount = @Discount,
+                          total = v.selling_price + @Tax + @Fees - @Discount,
+                          balance = v.selling_price + @Tax + @Fees - @Discount - si.paid, due_date = @DueDate
+                      FROM vehicle v
+                      WHERE si.id = @Id AND LOWER(si.lifecycle) = @Draft AND v.id = @VehicleId",
+                    new
+                    {
+                        Id = id,
+                        CustomerId = invoice.Customer_Id,
+                        SalespersonId = invoice.Salesperson_Id,
+                        VehicleId = invoice.Vehicle_Id,
+                        InvoiceDate = invoice.Invoice_Date.Date,
+                        DueDate = invoice.Due_Date?.Date,
+                        Tax = invoice.Tax,
+                        Fees = invoice.Fees,
+                        Discount = invoice.Discount,
+                        Draft = InvoiceLifecycle.Draft.ToDbValue()
+                    },
+                    tx);
+                if (updatedRows == 0)
+                    throw new ConflictException("The invoice is no longer a draft.");
+
+                var updated = await connection.QuerySingleAsync<SalesInvoiceResponseDto>(
+                    $"SELECT {BrowseColumns} {BrowseFrom} WHERE si.id = @Id", new { Id = id }, tx);
+
+                tx.Commit();
+                return updated;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
 
         public async Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice)
@@ -204,10 +277,12 @@ namespace NPMotors.Repository.Repositories
               v.vin, v.make, v.model, v.status AS Vehicle_Status,
               COALESCE(v.selling_price, 0) AS Selling_Price, COALESCE(v.total_cost, 0) AS Vehicle_Total_Cost,
               COALESCE(si.sale_price, 0) AS Sale_Price, si.tax, si.fees, si.discount, si.paid,
-              si.lifecycle AS Lifecycle, si.payment_status AS Payment_Status, si.cancel_reason AS Cancel_Reason";
+               si.lifecycle AS Lifecycle, si.payment_status AS Payment_Status, si.cancel_reason AS Cancel_Reason,
+               ar.id AS Ar_Invoice_Id";
 
         private const string BrowseFrom =
-            "FROM sales_invoice si JOIN customer c ON c.id = si.customer_id JOIN vehicle v ON v.id = si.vehicle_id";
+            "FROM sales_invoice si JOIN customer c ON c.id = si.customer_id JOIN vehicle v ON v.id = si.vehicle_id " +
+            "LEFT JOIN ar_invoice ar ON ar.invoice_id = si.id";
 
         // Cancelled invoices are included unless the Lifecycle filter says otherwise.
         public async Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters)
@@ -323,12 +398,22 @@ namespace NPMotors.Repository.Repositories
         public async Task<SalesInvoice?> GetInvoiceById(long id)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
+            return await SelectInvoiceAsync(connection, id, null);
+        }
 
+        // Same read inside the caller's transaction, so an invoice inserted in it is visible.
+        public async Task<SalesInvoice?> GetInvoiceById(long id, IDbTransaction tx)
+        {
+            return await SelectInvoiceAsync(tx.Connection!, id, tx);
+        }
+
+        private static async Task<SalesInvoice?> SelectInvoiceAsync(IDbConnection connection, long id, IDbTransaction? tx)
+        {
             return await connection.QuerySingleOrDefaultAsync<SalesInvoice>(
                 @"SELECT id, number, customer_id AS CustomerId, vehicle_id AS VehicleId, due_date AS DueDate,
                          COALESCE(total, 0) AS Total, paid, balance, payment_status AS PaymentStatus, lifecycle
                   FROM sales_invoice WHERE id = @Id",
-                new { Id = id });
+                new { Id = id }, tx);
         }
 
         // Only a Draft can be posted: 0 rows means the invoice was posted or cancelled in the meantime.
@@ -376,11 +461,11 @@ namespace NPMotors.Repository.Repositories
                 tx);
         }
 
-        private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams)
+        private static async Task<SalesInvoiceResponseDto?> QueryInvoiceAsync(IDbConnection connection, string sql, DynamicParameters queryParams, IDbTransaction? tx = null)
         {
             try
             {
-                return await connection.QuerySingleOrDefaultAsync<SalesInvoiceResponseDto>(sql, queryParams);
+                return await connection.QuerySingleOrDefaultAsync<SalesInvoiceResponseDto>(sql, queryParams, tx);
             }
             catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
             {

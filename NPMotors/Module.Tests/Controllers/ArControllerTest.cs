@@ -8,9 +8,9 @@ using NPMotors.Repository.Repositories;
 
 namespace Module.Tests.Controllers
 {
-    // GET /Ar/GetArAging (Story 17) against the test database. As-of date: 2026-11-08.
+    // GET /Ar/GetAllAr (Story 17) against the test database. As-of date: 2026-11-08.
     // Customer Alpha: A1 due 2026-10-01 unpaid 1000 (38 days overdue), A2 due 2026-10-15 partial 1000/400 (24 days),
-    //                 A3 due 2026-12-01 unpaid 1000 (0 days, not overdue), A6 fully paid (never listed).
+    //                 A3 due 2026-12-01 unpaid 1000 (0 days, not overdue), A6 fully paid (listed only with no status or Paid).
     // Customer Beta:  B1 due 2026-10-20 unpaid 500 (19 days overdue).
     public class ArControllerTest : TestBase, IAsyncLifetime
     {
@@ -93,7 +93,7 @@ namespace Module.Tests.Controllers
 
         private async Task<(HttpResponseMessage Response, JObject Json)> GetAsync(string query)
         {
-            var response = await _testClient.GetAsync($"Ar/GetArAging?{query}");
+            var response = await _testClient.GetAsync($"Ar/GetAllAr?{query}");
             var text = await response.Content.ReadAsStringAsync();
             return (response, response.IsSuccessStatusCode ? JObject.Parse(text) : new JObject());
         }
@@ -111,20 +111,20 @@ namespace Module.Tests.Controllers
         // ---- 200, response shape ----
 
         [Fact]
-        public async Task GetArAging_Returns200WithItemsAndMetaData()
+        public async Task GetAllAr_Returns200WithItemsAndMetaData()
         {
             var (response, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(3, Items(json).Count);
+            Assert.Equal(4, Items(json).Count);
             var meta = Prop(json, "metaData");
             foreach (var name in new[] { "currentPage", "totalPages", "pageSize", "totalCount" })
                 Assert.NotNull(((JObject)meta).GetValue(name, StringComparison.OrdinalIgnoreCase));
-            Assert.Equal(3, (int)Prop(meta, "totalCount"));
+            Assert.Equal(4, (int)Prop(meta, "totalCount"));
         }
 
         [Fact]
-        public async Task GetArAging_EachItemShowsTheDocumentedColumns()
+        public async Task GetAllAr_EachItemShowsTheDocumentedColumns()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
@@ -135,7 +135,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_ReturnsTheStoredValuesAndCalculatedFields()
+        public async Task GetAllAr_ReturnsTheStoredValuesAndCalculatedFields()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
@@ -153,7 +153,7 @@ namespace Module.Tests.Controllers
         // ---- AC 2, 3 ----
 
         [Fact]
-        public async Task GetArAging_DaysOverdueIsAsOfMinusDueDate()
+        public async Task GetAllAr_DaysOverdueIsAsOfMinusDueDate()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
@@ -162,7 +162,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_NotYetDue_DaysOverdueZeroAndNotOverdue()
+        public async Task GetAllAr_NotYetDue_DaysOverdueZeroAndNotOverdue()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
@@ -172,7 +172,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_OpenArPastDue_ShowsOverdue()
+        public async Task GetAllAr_OpenArPastDue_ShowsOverdue()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
@@ -180,7 +180,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_LaterAsOfDate_MakesTheSameRowOverdue()
+        public async Task GetAllAr_LaterAsOfDate_MakesTheSameRowOverdue()
         {
             var (_, json) = await GetAsync($"AsOfDate=2026-12-11&CustomerId={_alphaId}");
 
@@ -190,17 +190,28 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_PaidArIsNotListed()
+        public async Task GetAllAr_NoStatus_ListsPaidArToo()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 
-            Assert.DoesNotContain(Items(json), i => Prop(i, "number").ToString() == Number("A6"));
+            Assert.Contains(Items(json), i => Prop(i, "number").ToString() == Number("A6"));
+        }
+
+        [Fact]
+        public async Task GetAllAr_StatusPaid_ReturnsOnlyFullyPaidRows()
+        {
+            var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&Status=paid");
+
+            var row = Assert.Single(Items(json));
+            Assert.Equal(Number("A6"), Prop(row, "number").ToString());
+            Assert.Equal(0m, (decimal)Prop(row, "balance"));
+            Assert.Equal("paid", Prop(row, "aging_Status").ToString());
         }
 
         // ---- AC 4: query parameters bind ----
 
         [Fact]
-        public async Task GetArAging_StatusOverdue_ReturnsOnlyOverdueRows()
+        public async Task GetAllAr_StatusOverdue_ReturnsOnlyOverdueRows()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&Status=Overdue");
 
@@ -209,7 +220,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_StatusUnpaid_ReturnsOnlyUnpaidNotPastDue()
+        public async Task GetAllAr_StatusUnpaid_ReturnsOnlyUnpaidNotPastDue()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&Status=Unpaid");
 
@@ -217,7 +228,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_StatusPartial_NothingPartialNotPastDue_ReturnsEmptyItems()
+        public async Task GetAllAr_StatusPartial_NothingPartialNotPastDue_ReturnsEmptyItems()
         {
             var (response, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&Status=Partial");
 
@@ -227,7 +238,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_CustomerId_ReturnsOnlyThatCustomer()
+        public async Task GetAllAr_CustomerId_ReturnsOnlyThatCustomer()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_betaId}");
 
@@ -238,7 +249,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_StatusAndCustomerTogether_BothApply()
+        public async Task GetAllAr_StatusAndCustomerTogether_BothApply()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_betaId}&Status=Partial");
 
@@ -246,20 +257,20 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_PageNumberAndPageSize_Bind()
+        public async Task GetAllAr_PageNumberAndPageSize_Bind()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&PageNumber=2&PageSize=2");
 
             var meta = Prop(json, "metaData");
-            Assert.Equal(Number("A3"), Prop(Assert.Single(Items(json)), "number").ToString());
+            Assert.Equal(new[] { Number("A2"), Number("A3") }, Items(json).Select(i => Prop(i, "number").ToString()).ToArray());
             Assert.Equal(2, (int)Prop(meta, "currentPage"));
             Assert.Equal(2, (int)Prop(meta, "pageSize"));
-            Assert.Equal(3, (int)Prop(meta, "totalCount"));
+            Assert.Equal(4, (int)Prop(meta, "totalCount"));
             Assert.Equal(2, (int)Prop(meta, "totalPages"));
         }
 
         [Fact]
-        public async Task GetArAging_PageSizeAboveTheCap_IsClamped()
+        public async Task GetAllAr_PageSizeAboveTheCap_IsClamped()
         {
             var (_, json) = await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}&PageSize=5000");
 
@@ -267,7 +278,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_NoAsOfDate_UsesToday()
+        public async Task GetAllAr_NoAsOfDate_UsesToday()
         {
             var (response, json) = await GetAsync($"CustomerId={_alphaId}&Status=Overdue");
 
@@ -279,7 +290,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_NoParameters_Returns200()
+        public async Task GetAllAr_NoParameters_Returns200()
         {
             var (response, json) = await GetAsync("");
 
@@ -290,7 +301,7 @@ namespace Module.Tests.Controllers
         // ---- 400 from [ApiController] model binding ----
 
         [Fact]
-        public async Task GetArAging_NonNumericCustomerId_Returns400()
+        public async Task GetAllAr_NonNumericCustomerId_Returns400()
         {
             var (response, _) = await GetAsync("CustomerId=abc");
 
@@ -298,7 +309,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_InvalidAsOfDate_Returns400()
+        public async Task GetAllAr_InvalidAsOfDate_Returns400()
         {
             var (response, _) = await GetAsync("AsOfDate=not-a-date");
 
@@ -311,9 +322,9 @@ namespace Module.Tests.Controllers
         [InlineData("POST")]
         [InlineData("PUT")]
         [InlineData("DELETE")]
-        public async Task GetArAging_WriteVerbs_Return405(string verb)
+        public async Task GetAllAr_WriteVerbs_Return405(string verb)
         {
-            var request = new HttpRequestMessage(new HttpMethod(verb), "Ar/GetArAging")
+            var request = new HttpRequestMessage(new HttpMethod(verb), "Ar/GetAllAr")
             {
                 Content = new StringContent("{}", Encoding.UTF8, "application/json")
             };
@@ -341,7 +352,7 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetArAging_ChangesNothing()
+        public async Task GetAllAr_ChangesNothing()
         {
             await GetAsync($"AsOfDate={AsOf}&CustomerId={_alphaId}");
 

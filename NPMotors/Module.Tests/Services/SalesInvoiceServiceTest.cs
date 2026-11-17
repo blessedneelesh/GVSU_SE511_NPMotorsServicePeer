@@ -1,4 +1,6 @@
+using System.Data;
 using NPMotors.Repository.Interface;
+using NPMotors.Repository.Models;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.RequestFeatures;
@@ -87,6 +89,11 @@ namespace Module.Tests.Services
                 });
             }
 
+            public Task<SalesInvoiceResponseDto?> UpdateDraftInvoice(long id, SalesInvoiceCreateDto invoice) => throw new NotSupportedException();
+            public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice, IDbTransaction tx) => throw new NotSupportedException();
+
+            public Task<SalesInvoice?> GetInvoiceById(long id, IDbTransaction tx) => throw new NotSupportedException();
+
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice)
             {
                 AddCalls.Add(invoice);
@@ -156,7 +163,7 @@ namespace Module.Tests.Services
             public Task<long> InsertArInvoice(NPMotors.Repository.Models.ArInvoice arInvoice, System.Data.IDbTransaction tx) => throw new NotSupportedException();
             public Task<NPMotors.Repository.Models.ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
             public Task<int> UpdateArPayment(NPMotors.Repository.Models.ArInvoice ar, decimal expectedBalance, System.Data.IDbTransaction tx) => throw new NotSupportedException();
-            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetArAging(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetAllAr(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
         }
 
         private readonly FakeSalesInvoiceRepository _repository = new();

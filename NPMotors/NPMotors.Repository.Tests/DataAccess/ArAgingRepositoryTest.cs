@@ -7,14 +7,14 @@ using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Repository.Tests.DataAccess
 {
-    // Story 17: ArInvoiceRepository.GetArAging. As-of date: 2026-11-08.
+    // Story 17: ArInvoiceRepository.GetAllAr. As-of date: 2026-11-08.
     // Customer Alpha (A) rows:                     due         amount paid  balance status
     //   A1  past due                               2026-10-01  1000   0     1000    unpaid   -> Overdue
     //   A2  past due, partly paid                  2026-10-15  1000   400   600     partial  -> Overdue
     //   A3  due later                              2026-12-01  1000   0     1000    unpaid
     //   A4  due on the as-of date                  2026-11-08  1000   300   700     partial
     //   A5  no due date                            NULL        1000   0     1000    unpaid
-    //   A6  fully paid (balance 0)                 2026-09-01  1000   1000  0       paid     -> never listed
+    //   A6  fully paid (balance 0)                 2026-09-01  1000   1000  0       paid     -> listed only with no status or Paid
     //   A7  due later, same date as A3, lower no.  2026-12-01  1000   0     1000    unpaid
     // Customer Beta (B) row:
     //   B1  past due                               2026-10-20  500    0     500     unpaid   -> Overdue
@@ -112,7 +112,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         private string Number(string key) => $"{_marker}-{key}";
 
         private Task<PagedList<ArAgingDto>> GetAsync(long? customerId, string? status = null, int pageNumber = 1, int pageSize = 100, DateTime? asOf = null) =>
-            _repository.GetArAging(new ArAgingParameters
+            _repository.GetAllAr(new ArAgingParameters
             {
                 AsOfDate = asOf ?? AsOf, CustomerId = customerId, Status = status, PageNumber = pageNumber, PageSize = pageSize
             });
@@ -120,22 +120,40 @@ namespace NPMotors.Repository.Tests.DataAccess
         private static string[] Keys(PagedList<ArAgingDto> page, string marker) =>
             page.Select(i => i.Number.Substring(marker.Length + 1)).ToArray();
 
-        // ---- Open AR only ----
+        // ---- No status = every AR row, paid included ----
 
         [Fact]
-        public async Task GetArAging_ListsOnlyOpenBalances_PaidArIsLeftOut()
+        public async Task GetAllAr_NoStatus_IncludesPaidAr()
         {
             var page = await GetAsync(_alphaId);
 
-            Assert.DoesNotContain(page, i => i.Number == Number("A6"));
-            Assert.All(page, i => Assert.True(i.Balance > 0));
-            Assert.Equal(6, page.Count);
+            Assert.Contains(page, i => i.Number == Number("A6") && i.Balance == 0);
+            Assert.Equal(7, page.Count);
+        }
+
+        [Theory]
+        [InlineData("Paid")]
+        [InlineData("  paid ")]
+        public async Task GetAllAr_Paid_ReturnsOnlySettledRows(string status)
+        {
+            var page = await GetAsync(_alphaId, status);
+
+            Assert.Equal(new[] { "A6" }, Keys(page, _marker));
+            Assert.All(page, i => Assert.Equal(0m, i.Balance));
+        }
+
+        [Fact]
+        public async Task GetAllAr_Paid_OtherCustomerHasNoPaidRows()
+        {
+            var page = await GetAsync(_betaId, "Paid");
+
+            Assert.Empty(page);
         }
 
         // ---- Customer filter (AC 4) ----
 
         [Fact]
-        public async Task GetArAging_CustomerFilter_ReturnsOnlyThatCustomer()
+        public async Task GetAllAr_CustomerFilter_ReturnsOnlyThatCustomer()
         {
             var page = await GetAsync(_betaId);
 
@@ -145,7 +163,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_NoCustomer_ReturnsRowsOfEveryCustomer()
+        public async Task GetAllAr_NoCustomer_ReturnsRowsOfEveryCustomer()
         {
             var page = await GetAsync(null);
 
@@ -154,7 +172,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_UnknownCustomer_ReturnsEmptyPagedList()
+        public async Task GetAllAr_UnknownCustomer_ReturnsEmptyPagedList()
         {
             var page = await GetAsync(long.MaxValue);
 
@@ -166,7 +184,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         // ---- Status filter (AC 3, 4) ----
 
         [Fact]
-        public async Task GetArAging_Overdue_ReturnsOpenRowsPastDue()
+        public async Task GetAllAr_Overdue_ReturnsOpenRowsPastDue()
         {
             var page = await GetAsync(_alphaId, "Overdue");
 
@@ -174,7 +192,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_Overdue_IncludesPartialRowsPastDue()
+        public async Task GetAllAr_Overdue_IncludesPartialRowsPastDue()
         {
             var page = await GetAsync(_alphaId, "Overdue");
 
@@ -182,7 +200,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_Overdue_RowDueOnAsOfDateIsNotOverdue()
+        public async Task GetAllAr_Overdue_RowDueOnAsOfDateIsNotOverdue()
         {
             var page = await GetAsync(_alphaId, "Overdue");
 
@@ -190,7 +208,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_Overdue_RowWithoutDueDateIsNotOverdue()
+        public async Task GetAllAr_Overdue_RowWithoutDueDateIsNotOverdue()
         {
             var page = await GetAsync(_alphaId, "Overdue");
 
@@ -198,7 +216,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_Unpaid_ReturnsUnpaidRowsNotPastDue()
+        public async Task GetAllAr_Unpaid_ReturnsUnpaidRowsNotPastDue()
         {
             var page = await GetAsync(_alphaId, "Unpaid");
 
@@ -207,7 +225,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_Unpaid_PastDueUnpaidRowIsLeftOutBecauseItIsOverdue()
+        public async Task GetAllAr_Unpaid_PastDueUnpaidRowIsLeftOutBecauseItIsOverdue()
         {
             var page = await GetAsync(_alphaId, "Unpaid");
 
@@ -215,7 +233,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_Partial_ReturnsPartialRowsNotPastDue()
+        public async Task GetAllAr_Partial_ReturnsPartialRowsNotPastDue()
         {
             var page = await GetAsync(_alphaId, "Partial");
 
@@ -228,7 +246,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         [InlineData("overdue")]
         [InlineData("OVERDUE")]
         [InlineData("  Overdue  ")]
-        public async Task GetArAging_StatusIsCaseAndWhitespaceInsensitive(string status)
+        public async Task GetAllAr_StatusIsCaseAndWhitespaceInsensitive(string status)
         {
             var page = await GetAsync(_alphaId, status);
 
@@ -236,7 +254,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_LowerCaseUnpaid_Works()
+        public async Task GetAllAr_LowerCaseUnpaid_Works()
         {
             var page = await GetAsync(_alphaId, "unpaid");
 
@@ -246,25 +264,24 @@ namespace NPMotors.Repository.Tests.DataAccess
         [Theory]
         [InlineData("")]
         [InlineData("   ")]
-        [InlineData("paid")]
         [InlineData("bogus")]
-        public async Task GetArAging_EmptyOrInvalidStatus_IsIgnored(string status)
+        public async Task GetAllAr_EmptyOrInvalidStatus_IsIgnored(string status)
         {
             var page = await GetAsync(_alphaId, status);
 
-            Assert.Equal(6, page.Count);
+            Assert.Equal(7, page.Count);
         }
 
         [Fact]
-        public async Task GetArAging_NullStatus_ReturnsAllOpenRows()
+        public async Task GetAllAr_NullStatus_ReturnsAllRowsIncludingPaid()
         {
             var page = await GetAsync(_alphaId, null);
 
-            Assert.Equal(6, page.Count);
+            Assert.Equal(7, page.Count);
         }
 
         [Fact]
-        public async Task GetArAging_StatusOnly_EveryRowMatches()
+        public async Task GetAllAr_StatusOnly_EveryRowMatches()
         {
             var page = await GetAsync(null, "Overdue");
 
@@ -279,7 +296,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_StatusAndCustomer_BothApply()
+        public async Task GetAllAr_StatusAndCustomer_BothApply()
         {
             var alpha = await GetAsync(_alphaId, "Overdue");
             var beta = await GetAsync(_betaId, "Overdue");
@@ -294,7 +311,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         // ---- AsOfDate ----
 
         [Fact]
-        public async Task GetArAging_EarlierAsOfDate_FewerOverdueRows()
+        public async Task GetAllAr_EarlierAsOfDate_FewerOverdueRows()
         {
             // At 2026-10-10 only A1 (due 2026-10-01) is past due.
             var page = await GetAsync(_alphaId, "Overdue", asOf: new DateTime(2026, 10, 10));
@@ -303,7 +320,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_LaterAsOfDate_MoreOverdueRows()
+        public async Task GetAllAr_LaterAsOfDate_MoreOverdueRows()
         {
             // At 2026-12-02 every Alpha row with a due date is past due (A1, A2, A4, A3, A0).
             var page = await GetAsync(_alphaId, "Overdue", asOf: new DateTime(2026, 12, 2));
@@ -313,9 +330,9 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_NoAsOfDate_UsesToday()
+        public async Task GetAllAr_NoAsOfDate_UsesToday()
         {
-            var page = await _repository.GetArAging(new ArAgingParameters { CustomerId = _alphaId, Status = "Overdue", PageSize = 100 });
+            var page = await _repository.GetAllAr(new ArAgingParameters { CustomerId = _alphaId, Status = "Overdue", PageSize = 100 });
 
             // Overdue means due before today: A1, A2, A4 (2026-11-08), A3 and A0 (2026-12-01) once today is later.
             var expected = new[] { new DateTime(2026, 10, 1), new DateTime(2026, 10, 15), new DateTime(2026, 11, 8),
@@ -326,36 +343,36 @@ namespace NPMotors.Repository.Tests.DataAccess
         // ---- Order, paging ----
 
         [Fact]
-        public async Task GetArAging_OrderedByDueDateThenNumber_NullDueDateLast()
+        public async Task GetAllAr_OrderedByDueDateThenNumber_NullDueDateLast()
         {
             var page = await GetAsync(_alphaId);
 
-            Assert.Equal(new[] { "A1", "A2", "A4", "A0", "A3", "A5" }, Keys(page, _marker));
+            Assert.Equal(new[] { "A6", "A1", "A2", "A4", "A0", "A3", "A5" }, Keys(page, _marker));
         }
 
         [Fact]
-        public async Task GetArAging_Paging_SecondPageAndTotalCount()
+        public async Task GetAllAr_Paging_SecondPageAndTotalCount()
         {
             var page = await GetAsync(_alphaId, pageNumber: 2, pageSize: 2);
 
-            Assert.Equal(new[] { "A4", "A0" }, Keys(page, _marker));
-            Assert.Equal(6, page.MetaData.TotalCount);
+            Assert.Equal(new[] { "A2", "A4" }, Keys(page, _marker));
+            Assert.Equal(7, page.MetaData.TotalCount);
             Assert.Equal(2, page.MetaData.CurrentPage);
             Assert.Equal(2, page.MetaData.PageSize);
-            Assert.Equal(3, page.MetaData.TotalPages);
+            Assert.Equal(4, page.MetaData.TotalPages);
         }
 
         [Fact]
-        public async Task GetArAging_PagePastTheEnd_ReturnsEmptyListWithTotalCount()
+        public async Task GetAllAr_PagePastTheEnd_ReturnsEmptyListWithTotalCount()
         {
             var page = await GetAsync(_alphaId, pageNumber: 5, pageSize: 2);
 
             Assert.Empty(page);
-            Assert.Equal(6, page.MetaData.TotalCount);
+            Assert.Equal(7, page.MetaData.TotalCount);
         }
 
         [Fact]
-        public async Task GetArAging_PageSizeAboveTheCap_IsClamped()
+        public async Task GetAllAr_PageSizeAboveTheCap_IsClamped()
         {
             var page = await GetAsync(_alphaId, pageSize: 1000);
 
@@ -363,7 +380,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_TotalCountRespectsTheFilters()
+        public async Task GetAllAr_TotalCountRespectsTheFilters()
         {
             var page = await GetAsync(_alphaId, "Overdue", pageSize: 1);
 
@@ -374,7 +391,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         // ---- Columns (AC 1) ----
 
         [Fact]
-        public async Task GetArAging_FillsEveryStoredColumnFromTheJoins()
+        public async Task GetAllAr_FillsEveryStoredColumnFromTheJoins()
         {
             var page = await GetAsync(_alphaId, "Partial");
 
@@ -392,7 +409,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_NoDueDate_DueDateIsNull()
+        public async Task GetAllAr_NoDueDate_DueDateIsNull()
         {
             var page = await GetAsync(_alphaId, "Unpaid");
 
@@ -400,7 +417,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_CalculatedFieldsAreLeftAtTheirDefaults()
+        public async Task GetAllAr_CalculatedFieldsAreLeftAtTheirDefaults()
         {
             var page = await GetAsync(_alphaId);
 
@@ -412,7 +429,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
-        public async Task GetArAging_DoesNotChangeTheStoredRows()
+        public async Task GetAllAr_DoesNotChangeTheStoredRows()
         {
             await GetAsync(_alphaId, "Overdue");
 

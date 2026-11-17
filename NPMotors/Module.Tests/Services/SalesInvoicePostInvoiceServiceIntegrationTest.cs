@@ -142,7 +142,7 @@ namespace Module.Tests.Services
                 new { BankId = _bankId, Name = $"{_marker} {name}", Balance = OpeningBalance, Status = status });
         }
 
-        private async Task<(long InvoiceId, long VehicleId)> CreateDraftAsync()
+        private async Task<long> CreateVehicleAsync()
         {
             var vendor = await new VendorRepository(_repositoryContext).AddVendor(new VendorCreateDto
             {
@@ -155,6 +155,12 @@ namespace Module.Tests.Services
                 Make = "Honda", Model = "Civic",
                 Purchase_Price = 15000m, Additional_Costs = 250m, Selling_Price = 18000m
             });
+            return vehicle.Id;
+        }
+
+        private async Task<(long InvoiceId, long VehicleId)> CreateDraftAsync()
+        {
+            var vehicle = new { Id = await CreateVehicleAsync() };
             var draft = await _invoiceRepository.AddSalesInvoice(new SalesInvoiceCreateDto
             {
                 Customer_Id = _customerId,
@@ -535,6 +541,311 @@ namespace Module.Tests.Services
             var result = await _service.PostInvoice(long.MaxValue, Credit());
 
             Assert.Null(result);
+        }
+
+        // ---- CreateAndPostInvoice: the Draft is inserted and posted in one transaction ----
+
+        private class InvoiceLookup
+        {
+            public long Id { get; set; }
+            public string Lifecycle { get; set; } = "";
+        }
+
+        private async Task<List<InvoiceLookup>> InvoicesForVehicleAsync(long vehicleId)
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return (await connection.QueryAsync<InvoiceLookup>(
+                "SELECT id, LOWER(lifecycle) AS lifecycle FROM sales_invoice WHERE vehicle_id = @Id", new { Id = vehicleId })).ToList();
+        }
+
+        private SalesInvoiceCreateAndPostRequest CreateAndPostRequest(long vehicleId, PostInvoiceRequest payment) => new()
+        {
+            Customer_Id = _customerId,
+            Salesperson_Id = _salespersonId,
+            Vehicle_Id = vehicleId,
+            Invoice_Date = new DateTime(2026, 5, 1),
+            Due_Date = new DateTime(2026, 5, 31),
+            Tax = 1000m, Fees = 200m, Discount = 700m,
+            PaymentCondition = payment.PaymentCondition,
+            AmountReceived = payment.AmountReceived,
+            PaymentMethod = payment.PaymentMethod,
+            Reference = payment.Reference,
+            BankAccountId = payment.BankAccountId,
+            ReceiptDate = payment.ReceiptDate
+        };
+
+        // A rejected request must leave no invoice at all (not even a Draft) and no AR, receipt or ledger rows.
+        private async Task AssertNothingCreatedAsync(long vehicleId)
+        {
+            Assert.Empty(await InvoicesForVehicleAsync(vehicleId));
+            Assert.Equal("available", await VehicleStatusAsync(vehicleId));
+            Assert.Empty(await TransactionsAsync());
+            Assert.Empty(await StatementLinesAsync());
+            Assert.Equal(OpeningBalance, await BookBalanceAsync(_accountId));
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_PaidInFull_CreatesAPostedPaidInvoiceAndNeverACommittedDraft()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            var result = await _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, PaidInFull(_accountId)));
+
+            Assert.Equal(Total, result.Total);
+            Assert.Equal(Total, result.Paid);
+            Assert.Equal(0m, result.Balance);
+            Assert.Equal(PaymentStatus.Paid, result.Payment_Status);
+            Assert.Equal(InvoiceLifecycle.Posted, result.Lifecycle);
+            var invoice = Assert.Single(await InvoicesForVehicleAsync(vehicleId));
+            Assert.Equal(result.Id, invoice.Id);
+            Assert.Equal("posted", invoice.Lifecycle);
+            var row = await InvoiceAsync(result.Id);
+            Assert.Equal("paid", row.Payment_Status);
+            Assert.Equal(Total, row.Paid);
+            Assert.Equal("sold", await VehicleStatusAsync(vehicleId));
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_PaidInFull_CreatesOneReceiptTransactionStatementLineAndNoAr()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            var result = await _service.CreateAndPostInvoice(
+                CreateAndPostRequest(vehicleId, PaidInFull(_accountId, PaymentMethod.Check, "CHK-1001")));
+
+            Assert.Empty(await ArRowsAsync(result.Id));
+            Assert.Null(result.Ar_Invoice_Id);
+            var receipt = Assert.Single(await ReceiptsAsync(result.Id));
+            Assert.Equal(result.Bank_Receipt_Id, receipt.Id);
+            Assert.Equal(_accountId, receipt.Bank_Account_Id);
+            Assert.Equal(_customerId, receipt.Customer_Id);
+            Assert.Equal(result.Id, receipt.Sales_Invoice_Id);
+            Assert.Equal("Check", receipt.Payment_Method);
+            Assert.Equal("CHK-1001", receipt.Reference);
+            Assert.Equal(Total, receipt.Amount);
+            var transaction = Assert.Single(await TransactionsAsync());
+            Assert.Equal(transaction.Id, receipt.Transaction_Id);
+            Assert.Equal("BankReceipt", transaction.Type);
+            Assert.Equal("in", transaction.Direction);
+            Assert.Equal(result.Number, transaction.Source_Number);
+            var line = Assert.Single(await StatementLinesAsync());
+            Assert.Equal(transaction.Id, line.Transaction_Id);
+            Assert.Equal(19000m, line.Running_Balance);
+            Assert.Equal(19000m, await BookBalanceAsync(_accountId));
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_Partial_CreatesAnArInvoiceMatchingTheSalesInvoiceAndAReceiptLinkedToIt()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            var result = await _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, Partial(_accountId, 6000m)));
+
+            Assert.Equal(6000m, result.Paid);
+            Assert.Equal(12500m, result.Balance);
+            Assert.Equal(PaymentStatus.Partial, result.Payment_Status);
+            var ar = Assert.Single(await ArRowsAsync(result.Id));
+            Assert.Equal(result.Ar_Invoice_Id, ar.Id);
+            Assert.Equal(18500m, ar.Amount);
+            Assert.Equal(6000m, ar.Paid);
+            Assert.Equal(12500m, ar.Balance);
+            Assert.Equal("partial", ar.Status);
+            var receipt = Assert.Single(await ReceiptsAsync(result.Id));
+            Assert.Equal(ar.Id, receipt.Ar_Invoice_Id);
+            Assert.Equal(6000m, receipt.Amount);
+            Assert.Equal(6500m, await BookBalanceAsync(_accountId));
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_Credit_CreatesArForTheFullTotalAndNoReceiptTransactionOrBalanceChange()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            var result = await _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, Credit()));
+
+            Assert.Equal(0m, result.Paid);
+            Assert.Equal(Total, result.Balance);
+            Assert.Equal(PaymentStatus.Unpaid, result.Payment_Status);
+            var ar = Assert.Single(await ArRowsAsync(result.Id));
+            Assert.Equal(result.Ar_Invoice_Id, ar.Id);
+            Assert.Equal(18500m, ar.Amount);
+            Assert.Equal(0m, ar.Paid);
+            Assert.Equal("unpaid", ar.Status);
+            Assert.Empty(await ReceiptsAsync(result.Id));
+            Assert.Null(result.Bank_Receipt_Id);
+            Assert.Empty(await TransactionsAsync());
+            Assert.Equal(OpeningBalance, await BookBalanceAsync(_accountId));
+            Assert.Equal("sold", await VehicleStatusAsync(vehicleId));
+        }
+
+        // The payment rules run after the Draft is inserted, so these prove the Draft is rolled back too.
+
+        [Fact]
+        public async Task CreateAndPostInvoice_InactiveBankAccount_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, PaidInFull(_inactiveAccountId))));
+
+            await AssertNothingCreatedAsync(vehicleId);
+            Assert.Equal(OpeningBalance, await BookBalanceAsync(_inactiveAccountId));
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_UnknownBankAccount_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, PaidInFull(long.MaxValue))));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_NoBankAccountForAnAmountReceived_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var payment = PaidInFull(_accountId);
+            payment.BankAccountId = null;
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, payment)));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_AmountAboveTotal_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var payment = PaidInFull(_accountId);
+            payment.AmountReceived = Total + 0.01m;
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, payment)));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_NegativeAmount_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, Partial(_accountId, -1m))));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_PaidInFullWithPartialAmount_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var payment = PaidInFull(_accountId);
+            payment.AmountReceived = 6000m;
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, payment)));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_CreditWithAmount_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var payment = Credit();
+            payment.AmountReceived = 100m;
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, payment)));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_AmountWithoutPaymentMethod_ThrowsValidationAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var payment = Partial(_accountId);
+            payment.PaymentMethod = null;
+
+            await Assert.ThrowsAsync<ValidationException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, payment)));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        // ---- Create-step rules ----
+
+        [Fact]
+        public async Task CreateAndPostInvoice_MissingCustomer_ThrowsArgumentAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var request = CreateAndPostRequest(vehicleId, Credit());
+            request.Customer_Id = 0;
+
+            await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateAndPostInvoice(request));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_NegativeTax_ThrowsArgumentAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var request = CreateAndPostRequest(vehicleId, Credit());
+            request.Tax = -1m;
+
+            await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateAndPostInvoice(request));
+
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_UnknownCustomer_ThrowsArgumentAndLeavesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            var request = CreateAndPostRequest(vehicleId, Credit());
+            request.Customer_Id = long.MaxValue;
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateAndPostInvoice(request));
+
+            Assert.Contains("Customer does not exist", ex.Message);
+            await AssertNothingCreatedAsync(vehicleId);
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_VehicleNotAvailable_ThrowsArgumentAndCreatesNoInvoice()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            using (var connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync("UPDATE vehicle SET status = 'sold' WHERE id = @Id", new { Id = vehicleId });
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, Partial(_accountId))));
+
+            Assert.Contains("available vehicles", ex.Message);
+            Assert.Empty(await InvoicesForVehicleAsync(vehicleId));
+            Assert.Empty(await TransactionsAsync());
+            Assert.Equal(OpeningBalance, await BookBalanceAsync(_accountId));
+        }
+
+        [Fact]
+        public async Task CreateAndPostInvoice_SameVehicleTwice_SecondIsRejectedAndOnlyOneInvoiceExists()
+        {
+            var vehicleId = await CreateVehicleAsync();
+            await _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, Credit()));
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CreateAndPostInvoice(CreateAndPostRequest(vehicleId, PaidInFull(_accountId))));
+
+            Assert.Single(await InvoicesForVehicleAsync(vehicleId));
+            Assert.Empty(await TransactionsAsync());
+            Assert.Equal(OpeningBalance, await BookBalanceAsync(_accountId));
         }
     }
 }

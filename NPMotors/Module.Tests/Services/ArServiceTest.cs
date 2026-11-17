@@ -7,8 +7,8 @@ using NPMotors.Services.Service;
 
 namespace Module.Tests.Services
 {
-    // Story 17, GetArAging. CalculateDaysOverdue and DetermineAgingStatus are private static;
-    // they are tested only through GetArAging. As-of date used below: 2026-11-08.
+    // Story 17, GetAllAr. CalculateDaysOverdue and DetermineAgingStatus are private static;
+    // they are tested only through GetAllAr. As-of date used below: 2026-11-08.
     public class ArServiceTest
     {
         private static readonly DateTime AsOf = new(2026, 11, 8);
@@ -20,7 +20,7 @@ namespace Module.Tests.Services
 
             public Task<int> CloseArInvoice(long invoiceId, System.Data.IDbTransaction tx) => throw new NotSupportedException();
 
-            public Task<PagedList<ArAgingDto>> GetArAging(ArAgingParameters parameters)
+            public Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters)
             {
                 Calls.Add(parameters);
                 return Task.FromResult(Page);
@@ -44,14 +44,14 @@ namespace Module.Tests.Services
         private async Task<ArAgingDto> AgeSingleAsync(DateTime? due, decimal balance = 500m, string status = "unpaid", DateTime? asOf = null)
         {
             _repository.Page = new PagedList<ArAgingDto>(new List<ArAgingDto> { Item(due, balance, status) }, 1, 1, 5);
-            var result = await CreateService().GetArAging(new ArAgingParameters { AsOfDate = asOf ?? AsOf });
+            var result = await CreateService().GetAllAr(new ArAgingParameters { AsOfDate = asOf ?? AsOf });
             return Assert.Single(result);
         }
 
         // ---- CalculateDaysOverdue (AC 2) ----
 
         [Fact]
-        public async Task GetArAging_DueTenDaysBeforeAsOf_DaysOverdueIs10()
+        public async Task GetAllAr_DueTenDaysBeforeAsOf_DaysOverdueIs10()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 29));
 
@@ -59,7 +59,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_DueOneDayBeforeAsOf_DaysOverdueIs1()
+        public async Task GetAllAr_DueOneDayBeforeAsOf_DaysOverdueIs1()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 7));
 
@@ -67,7 +67,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_DueOnAsOfDate_DaysOverdueIsZero()
+        public async Task GetAllAr_DueOnAsOfDate_DaysOverdueIsZero()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 8));
 
@@ -75,7 +75,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_DueAfterAsOf_DaysOverdueNeverBelowZero()
+        public async Task GetAllAr_DueAfterAsOf_DaysOverdueNeverBelowZero()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 18));
 
@@ -83,7 +83,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_NoDueDate_DaysOverdueIsZero()
+        public async Task GetAllAr_NoDueDate_DaysOverdueIsZero()
         {
             var item = await AgeSingleAsync(null);
 
@@ -91,7 +91,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_TimeOfDayIsIgnored()
+        public async Task GetAllAr_TimeOfDayIsIgnored()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 7, 23, 59, 0), asOf: new DateTime(2026, 11, 8, 0, 1, 0));
 
@@ -99,7 +99,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_DaysOverdueUsesTheGivenAsOfDate()
+        public async Task GetAllAr_DaysOverdueUsesTheGivenAsOfDate()
         {
             // Due 2026-10-29: 10 days at 2026-11-08, 20 days at 2026-11-18.
             var item = await AgeSingleAsync(new DateTime(2026, 10, 29), asOf: new DateTime(2026, 11, 18));
@@ -108,13 +108,13 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_NoAsOfDate_DefaultsToToday()
+        public async Task GetAllAr_NoAsOfDate_DefaultsToToday()
         {
             var parameters = new ArAgingParameters();
             var before = DateTime.Today;
             _repository.Page = new PagedList<ArAgingDto>(new List<ArAgingDto> { Item(before.AddDays(-3)) }, 1, 1, 5);
 
-            var result = await CreateService().GetArAging(parameters);
+            var result = await CreateService().GetAllAr(parameters);
 
             Assert.Equal(3, Assert.Single(result).Days_Overdue);
             Assert.True(parameters.AsOfDate == before || parameters.AsOfDate == DateTime.Today);
@@ -123,7 +123,7 @@ namespace Module.Tests.Services
         // ---- DetermineAgingStatus (AC 3) ----
 
         [Fact]
-        public async Task GetArAging_OpenBalanceAndPastDue_AgingStatusIsOverdue()
+        public async Task GetAllAr_OpenBalanceAndPastDue_AgingStatusIsOverdue()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 7), 500m, "unpaid");
 
@@ -131,7 +131,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_PartialAndPastDue_AgingStatusIsOverdue()
+        public async Task GetAllAr_PartialAndPastDue_AgingStatusIsOverdue()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 1), 200m, "partial");
 
@@ -139,7 +139,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_OverdueKeepsTheStoredStatusInStatus()
+        public async Task GetAllAr_OverdueKeepsTheStoredStatusInStatus()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 1), 200m, "partial");
 
@@ -147,7 +147,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_UnpaidNotYetDue_AgingStatusIsStoredStatus()
+        public async Task GetAllAr_UnpaidNotYetDue_AgingStatusIsStoredStatus()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 18), 500m, "unpaid");
 
@@ -155,7 +155,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_PartialNotYetDue_AgingStatusIsStoredStatus()
+        public async Task GetAllAr_PartialNotYetDue_AgingStatusIsStoredStatus()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 18), 500m, "partial");
 
@@ -163,7 +163,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_DueToday_IsNotOverdue()
+        public async Task GetAllAr_DueToday_IsNotOverdue()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 8), 500m, "unpaid");
 
@@ -171,7 +171,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_NoDueDate_IsNotOverdue()
+        public async Task GetAllAr_NoDueDate_IsNotOverdue()
         {
             var item = await AgeSingleAsync(null, 500m, "partial");
 
@@ -179,7 +179,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_ZeroBalancePastDue_IsNotOverdue()
+        public async Task GetAllAr_ZeroBalancePastDue_IsNotOverdue()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 1), 0m, "paid");
 
@@ -187,10 +187,10 @@ namespace Module.Tests.Services
             Assert.Equal("paid", item.Aging_Status);
         }
 
-        // ---- GetArAging as a whole ----
+        // ---- GetAllAr as a whole ----
 
         [Fact]
-        public async Task GetArAging_AppliesBothHelpersToEveryItem()
+        public async Task GetAllAr_AppliesBothHelpersToEveryItem()
         {
             _repository.Page = new PagedList<ArAgingDto>(new List<ArAgingDto>
             {
@@ -200,14 +200,14 @@ namespace Module.Tests.Services
                 Item(new DateTime(2026, 11, 6), 50m, "partial")      // 2 days, Overdue
             }, 4, 1, 5);
 
-            var result = await CreateService().GetArAging(new ArAgingParameters { AsOfDate = AsOf });
+            var result = await CreateService().GetAllAr(new ArAgingParameters { AsOfDate = AsOf });
 
             Assert.Equal(new[] { 10, 0, 0, 2 }, result.Select(i => i.Days_Overdue).ToArray());
             Assert.Equal(new[] { "Overdue", "partial", "unpaid", "Overdue" }, result.Select(i => i.Aging_Status).ToArray());
         }
 
         [Fact]
-        public async Task GetArAging_KeepsTheStoredColumnsUnchanged()
+        public async Task GetAllAr_KeepsTheStoredColumnsUnchanged()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 29), 500m, "unpaid");
 
@@ -224,11 +224,11 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_KeepsMetaData()
+        public async Task GetAllAr_KeepsMetaData()
         {
             _repository.Page = new PagedList<ArAgingDto>(new List<ArAgingDto> { Item(AsOf), Item(AsOf) }, 12, 2, 5);
 
-            var result = await CreateService().GetArAging(new ArAgingParameters { AsOfDate = AsOf, PageNumber = 2 });
+            var result = await CreateService().GetAllAr(new ArAgingParameters { AsOfDate = AsOf, PageNumber = 2 });
 
             Assert.Equal(12, result.MetaData.TotalCount);
             Assert.Equal(2, result.MetaData.CurrentPage);
@@ -237,11 +237,11 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_EmptyPage_ReturnsEmptyListWithMetaData()
+        public async Task GetAllAr_EmptyPage_ReturnsEmptyListWithMetaData()
         {
             _repository.Page = new PagedList<ArAgingDto>(new List<ArAgingDto>(), 0, 1, 5);
 
-            var result = await CreateService().GetArAging(new ArAgingParameters { AsOfDate = AsOf });
+            var result = await CreateService().GetAllAr(new ArAgingParameters { AsOfDate = AsOf });
 
             Assert.Empty(result);
             Assert.Equal(0, result.MetaData.TotalCount);
@@ -249,11 +249,11 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_PassesTheParametersToTheRepositoryUnchanged()
+        public async Task GetAllAr_PassesTheParametersToTheRepositoryUnchanged()
         {
             var parameters = new ArAgingParameters { AsOfDate = AsOf, Status = "Overdue", CustomerId = 42, PageNumber = 3, PageSize = 20 };
 
-            await CreateService().GetArAging(parameters);
+            await CreateService().GetAllAr(parameters);
 
             var call = Assert.Single(_repository.Calls);
             Assert.Same(parameters, call);
@@ -265,9 +265,9 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetArAging_RepositoryIsCalledOnce()
+        public async Task GetAllAr_RepositoryIsCalledOnce()
         {
-            await CreateService().GetArAging(new ArAgingParameters { AsOfDate = AsOf });
+            await CreateService().GetAllAr(new ArAgingParameters { AsOfDate = AsOf });
 
             Assert.Single(_repository.Calls);
         }

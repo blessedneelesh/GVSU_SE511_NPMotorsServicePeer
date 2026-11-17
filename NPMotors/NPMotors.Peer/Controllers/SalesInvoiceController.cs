@@ -96,5 +96,46 @@ namespace NPMotors.Peer.Controllers
                 return Conflict(new { message = ex.Message });
             }
         }
+
+        // Same body as CreateAndPost; only the invoice fields are saved on a draft.
+        [HttpPut]
+        public async Task<IActionResult> UpdateDraft([FromQuery] long id, [FromBody] SalesInvoiceCreateDto invoice)
+        {
+            try
+            {
+                var updated = await _salesInvoiceService.UpdateDraft(id, invoice);
+                return updated is null ? NotFound() : Ok(updated);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (ConflictException ex)
+            {
+                return Conflict(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> CreateAndPost([FromBody] SalesInvoiceCreateAndPostRequest request)
+        {
+            try
+            {
+                var posted = await _salesInvoiceService.CreateAndPostInvoice(request);
+                return StatusCode(201, posted);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
+            catch (ConflictException ex)
+            {
+                return Conflict(new { message = ex.Message });
+            }
+        }
     }
 }
