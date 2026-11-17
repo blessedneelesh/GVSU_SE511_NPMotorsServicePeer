@@ -92,6 +92,7 @@ namespace Module.Tests.Services
                 return Task.FromResult(Ar);
             }
 
+            public Task<NPMotors.Repository.Models.Dto.ArDetailDto?> GetArById(long id) => throw new NotSupportedException();
             public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetAllAr(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
 
             public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx)
@@ -137,6 +138,7 @@ namespace Module.Tests.Services
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice) => throw new NotSupportedException();
             public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters) => throw new NotSupportedException();
+            public Task<List<SalesInvoiceByCustomerDto>> GetSalesInvoiceByCustomer(long customerId) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, System.Data.IDbTransaction tx) => throw new NotSupportedException();
             public Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx) => throw new NotSupportedException();
