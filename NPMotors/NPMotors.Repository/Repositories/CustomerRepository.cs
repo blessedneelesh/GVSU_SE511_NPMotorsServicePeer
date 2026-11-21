@@ -56,7 +56,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Limit", customerParameters.PageSize);
 
             var customers = (await connection.QueryAsync<CustomerResponseDto>(
-                $"SELECT * FROM customer{whereSql} OFFSET @Offset LIMIT @Limit",
+                $"SELECT {CustomerColumns} FROM customer{whereSql} OFFSET @Offset LIMIT @Limit",
                 queryParams)).ToList();
 
             return new PagedList<CustomerResponseDto>(
