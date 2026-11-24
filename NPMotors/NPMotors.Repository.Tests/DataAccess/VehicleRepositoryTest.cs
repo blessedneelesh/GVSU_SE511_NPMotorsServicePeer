@@ -17,7 +17,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
         public VehicleRepositoryTest()
         {
-            _repository = new VehicleRepository(_repositoryContext);
+            _repository = new VehicleRepository(_repositoryContext, null!);
             _vendorRepository = new VendorRepository(_repositoryContext);
         }
 

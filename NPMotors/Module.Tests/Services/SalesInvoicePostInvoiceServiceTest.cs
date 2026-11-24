@@ -127,6 +127,7 @@ namespace Module.Tests.Services
             }
 
             public Task<VehicleResponseDto> AddVehicle(VehicleCreateDto vehicle) => throw new NotSupportedException();
+            public Task<VehiclePurchaseResponseDto> PurchaseVehicle(VehiclePurchaseCreateDto purchase, NPMotors.Repository.Models.APBill? apBill) => throw new NotSupportedException();
             public Task<bool> VinExists(string vin) => throw new NotSupportedException();
             public Task<string?> GetVendorStatus(long vendorId) => throw new NotSupportedException();
             public Task<bool> DeleteVehicle(long id) => throw new NotSupportedException();

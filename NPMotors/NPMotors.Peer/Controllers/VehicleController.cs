@@ -3,6 +3,7 @@ using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Abstractions.ServiceInterfaces;
 using Microsoft.AspNetCore.Mvc;
 using System;
+using System.ComponentModel.DataAnnotations;
 using System.Collections.Generic;
 using System.Text;
 namespace NPMotors.Peer.Controllers
@@ -36,6 +37,20 @@ namespace NPMotors.Peer.Controllers
         {
             var vehicle = await _vehicleService.GetVehicleById(id);
             return vehicle is null ? NotFound() : Ok(vehicle);
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> PurchaseVehicle([FromBody] VehiclePurchaseCreateDto purchase)
+        {
+            try
+            {
+                var created = await _vehicleService.PurchaseVehicle(purchase);
+                return StatusCode(201, created);
+            }
+            catch (Exception ex) when (ex is ArgumentException or ValidationException)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
         }
 
         [HttpPost]

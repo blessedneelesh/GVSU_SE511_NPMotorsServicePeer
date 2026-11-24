@@ -10,7 +10,7 @@ namespace Module.Tests.Controllers
     public class VehicleControllerTest : TestBase, IAsyncLifetime
     {
         private VendorRepository _vendorRepo => new(_repositoryContext);
-        private VehicleRepository _vehicleRepo => new(_repositoryContext);
+        private VehicleRepository _vehicleRepo => new(_repositoryContext, null!);
         private readonly string _marker = $"itest-{Guid.NewGuid():N}".Substring(0, 12);
         private readonly List<long> _vehicleIds = new();
         private readonly List<long> _vendorIds = new();

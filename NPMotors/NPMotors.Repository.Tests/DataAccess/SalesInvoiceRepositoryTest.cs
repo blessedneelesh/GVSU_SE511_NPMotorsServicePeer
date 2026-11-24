@@ -25,7 +25,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         public SalesInvoiceRepositoryTest()
         {
             _repository = new SalesInvoiceRepository(_repositoryContext);
-            _vehicleRepository = new VehicleRepository(_repositoryContext);
+            _vehicleRepository = new VehicleRepository(_repositoryContext, null!);
             _vendorRepository = new VendorRepository(_repositoryContext);
             _customerRepository = new CustomerRepository(_repositoryContext);
             _employeeRepository = new EmployeeRepository(_repositoryContext);

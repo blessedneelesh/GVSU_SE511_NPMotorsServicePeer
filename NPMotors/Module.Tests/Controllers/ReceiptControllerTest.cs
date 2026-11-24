@@ -86,7 +86,7 @@ namespace Module.Tests.Controllers
             {
                 Name = $"{_marker} Vendor", Type = VendorType.Vehicles, Status = Status.Active
             });
-            var vehicle = await new VehicleRepository(_repositoryContext).AddVehicle(new VehicleCreateDto
+            var vehicle = await new VehicleRepository(_repositoryContext, null!).AddVehicle(new VehicleCreateDto
             {
                 Vendor_Id = vendor.Id,
                 Vin = $"{_marker}{++_vehicleCount}".ToUpperInvariant().PadRight(17, '0').Substring(0, 17),

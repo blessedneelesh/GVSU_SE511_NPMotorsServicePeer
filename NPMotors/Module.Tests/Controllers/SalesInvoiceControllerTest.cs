@@ -13,7 +13,7 @@ namespace Module.Tests.Controllers
     public class SalesInvoiceControllerTest : TestBase, IAsyncLifetime
     {
         private VendorRepository _vendorRepo => new(_repositoryContext);
-        private VehicleRepository _vehicleRepo => new(_repositoryContext);
+        private VehicleRepository _vehicleRepo => new(_repositoryContext, null!);
         private CustomerRepository _customerRepo => new(_repositoryContext);
         private EmployeeRepository _employeeRepo => new(_repositoryContext);
         private readonly string _marker = $"itest-{Guid.NewGuid():N}".Substring(0, 12);
@@ -1324,7 +1324,7 @@ namespace Module.Tests.Controllers
                 });
                 _byCustomerVendorId = vendor.Id;
             }
-            var vehicle = await new VehicleRepository(_repositoryContext).AddVehicle(new VehicleCreateDto
+            var vehicle = await new VehicleRepository(_repositoryContext, null!).AddVehicle(new VehicleCreateDto
             {
                 Vendor_Id = _byCustomerVendorId,
                 Vin = $"{_marker}B{++_byCustomerVehicleCount}".ToUpperInvariant().PadRight(17, '0').Substring(0, 17),
