@@ -1,5 +1,6 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
+using Dapper;
 using Newtonsoft.Json;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
@@ -15,10 +16,48 @@ namespace Module.Tests.Controllers
         private readonly List<long> _vehicleIds = new();
         private readonly List<long> _vendorIds = new();
 
-        public Task InitializeAsync() => Task.CompletedTask;
+        private long _purchaseVendorId;
+        private long _bankId;
+        private long _accountId;
+
+        public async Task InitializeAsync()
+        {
+            // Vendor, bank and bank account used by the PurchaseVehicle tests (Story 19).
+            var vendor = await _vendorRepo.AddVendor(new VendorCreateDto
+            {
+                Name = $"{_marker} Vendor",
+                Type = VendorType.Vehicles,
+                Status = Status.Active
+            });
+            _purchaseVendorId = vendor.Id;
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            _bankId = await connection.ExecuteScalarAsync<long>(
+                "INSERT INTO bank (name) VALUES (@Name) RETURNING id", new { Name = $"{_marker} Bank" });
+            _accountId = await InsertAccountAsync(100000m);
+        }
 
         public async Task DisposeAsync()
         {
+            try
+            {
+                using var connection = _repositoryContext.GetDatabaseConnection();
+                var p = new { Marker = _marker + "%", BankId = _bankId };
+                await connection.ExecuteAsync(
+                    "DELETE FROM bank_payment WHERE vehicle_id IN (SELECT id FROM vehicle WHERE vin ILIKE @Marker)", p);
+                await connection.ExecuteAsync(
+                    "DELETE FROM ap_bill WHERE vehicle_id IN (SELECT id FROM vehicle WHERE vin ILIKE @Marker)", p);
+                await connection.ExecuteAsync(
+                    "DELETE FROM bank_statement_line WHERE bank_account_id IN (SELECT id FROM bank_account WHERE bank_id = @BankId)", p);
+                await connection.ExecuteAsync(
+                    @"DELETE FROM ""transaction"" WHERE bank_account_id IN (SELECT id FROM bank_account WHERE bank_id = @BankId)", p);
+                await connection.ExecuteAsync("DELETE FROM vehicle WHERE vin ILIKE @Marker", p);
+                await connection.ExecuteAsync("DELETE FROM bank_account WHERE bank_id = @BankId", p);
+                await connection.ExecuteAsync("DELETE FROM bank WHERE id = @BankId", p);
+                await _vendorRepo.DeleteVendor(_purchaseVendorId);
+            }
+            catch { }
+
             foreach (var id in _vehicleIds)
             {
                 try { await _vehicleRepo.DeleteVehicle(id); } catch { }
@@ -345,6 +384,296 @@ namespace Module.Tests.Controllers
 
             Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
             Assert.Equal(HttpStatusCode.BadRequest, secondResponse.StatusCode);
+        }
+
+        // ---- Story 19: PurchaseVehicle ----
+
+        private async Task<long> InsertAccountAsync(decimal balance, string status = "active")
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return await connection.ExecuteScalarAsync<long>(
+                @"INSERT INTO bank_account (bank_id, name, type, opening_balance, book_balance, status)
+                  VALUES (@BankId, @Name, 'Checking', @Balance, @Balance, @Status) RETURNING id",
+                new { BankId = _bankId, Name = $"{_marker} Account {Guid.NewGuid():N}".Substring(0, 40), Balance = balance, Status = status });
+        }
+
+        // Total cost 40 000 (38 000 + 2 000).
+        private VehiclePurchaseCreateDto Purchase(string condition, decimal paid, string suffix = "1") => new()
+        {
+            Vendor_Id = _purchaseVendorId,
+            Vin = $"{_marker}{suffix}".ToUpperInvariant().PadRight(17, '0').Substring(0, 17),
+            Make = "Honda",
+            Model = "Accord",
+            Purchase_Date = new DateTime(2026, 11, 3),
+            Purchase_Price = 38000m,
+            Additional_Costs = 2000m,
+            Payment_Condition = condition,
+            Amount_Paid = paid,
+            Payment_Method = paid > 0 ? "Check" : null,
+            Reference = paid > 0 ? "CHK-1001" : null,
+            Bank_Account_Id = paid > 0 ? _accountId : null,
+            Due_Date = new DateTime(2026, 12, 3)
+        };
+
+        private Task<HttpResponseMessage> PostPurchaseAsync(object body) =>
+            _testClient.PostAsync("Vehicle/PurchaseVehicle", Json(body));
+
+        private async Task<int> CountAsync(string sql, object? param = null)
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return await connection.ExecuteScalarAsync<int>(sql, param);
+        }
+
+        private Task<int> VehicleCountAsync() =>
+            CountAsync("SELECT COUNT(*) FROM vehicle WHERE vin ILIKE @Marker", new { Marker = _marker + "%" });
+
+        private async Task<decimal> BalanceAsync()
+        {
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            return await connection.ExecuteScalarAsync<decimal>(
+                "SELECT book_balance FROM bank_account WHERE id = @Id", new { Id = _accountId });
+        }
+
+        // ---- Success ----
+
+        [Fact]
+        public async Task PurchaseVehicle_Partial_Returns201WithApBillAndPayment()
+        {
+            var response = await PostPurchaseAsync(Purchase("Partial", 15000m));
+            var body = await ReadAsync<VehiclePurchaseResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.NotNull(body);
+            Assert.True(body!.Id > 0);
+            Assert.Equal(40000m, body.Total_Cost);
+            Assert.Equal("Partial", body.Payment_Condition);
+            Assert.Equal(15000m, body.Amount_Paid);
+            Assert.Equal(25000m, body.Balance_Due);
+            Assert.Equal("partial", body.Payment_Status);
+            Assert.NotNull(body.Ap_Bill_Id);
+            Assert.NotNull(body.Ap_Bill_Number);
+            Assert.NotNull(body.Bank_Payment_Id);
+            Assert.NotNull(body.Payment_Number);
+            Assert.NotNull(body.Transaction_Id);
+            Assert.Equal(85000m, body.Book_Balance);
+            Assert.Equal($"{_marker} Vendor", body.Vendor_Name);
+            Assert.Equal(85000m, await BalanceAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_PaidInFull_Returns201WithoutApBill()
+        {
+            var response = await PostPurchaseAsync(Purchase("PaidInFull", 40000m));
+            var body = await ReadAsync<VehiclePurchaseResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Null(body!.Ap_Bill_Id);
+            Assert.Null(body.Ap_Bill_Number);
+            Assert.NotNull(body.Bank_Payment_Id);
+            Assert.Equal(0m, body.Balance_Due);
+            Assert.Equal("paid", body.Payment_Status);
+            Assert.Equal(60000m, await BalanceAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_Credit_Returns201WithApBillAndNoPayment()
+        {
+            var response = await PostPurchaseAsync(Purchase("Credit", 0m));
+            var body = await ReadAsync<VehiclePurchaseResponseDto>(response);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.NotNull(body!.Ap_Bill_Id);
+            Assert.Null(body.Bank_Payment_Id);
+            Assert.Null(body.Transaction_Id);
+            Assert.Equal(40000m, body.Balance_Due);
+            Assert.Equal("unpaid", body.Payment_Status);
+            Assert.Equal(100000m, await BalanceAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_ApBillSavedWithVehicleCostAsAmount()
+        {
+            var body = await ReadAsync<VehiclePurchaseResponseDto>(await PostPurchaseAsync(Purchase("Partial", 15000m)));
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            var row = await connection.QuerySingleAsync<(decimal Amount, decimal Paid, decimal Balance, string Status)>(
+                "SELECT amount, paid, balance, status FROM ap_bill WHERE id = @Id", new { Id = body!.Ap_Bill_Id });
+            Assert.Equal(40000m, row.Amount);
+            Assert.Equal(15000m, row.Paid);
+            Assert.Equal(25000m, row.Balance);
+            Assert.Equal("partial", row.Status);
+        }
+
+        // ---- 400: invalid DTO ----
+
+        [Fact]
+        public async Task PurchaseVehicle_NegativeAmountPaid_Returns400_NothingSaved()
+        {
+            var response = await PostPurchaseAsync(Purchase("Partial", -1m));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_UnknownCondition_Returns400()
+        {
+            var response = await PostPurchaseAsync(Purchase("Layaway", 0m));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_MissingCondition_Returns400()
+        {
+            var dto = Purchase("Credit", 0m);
+            dto.Payment_Condition = "";
+
+            var response = await PostPurchaseAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_UnknownMethod_Returns400()
+        {
+            var dto = Purchase("Partial", 15000m);
+            dto.Payment_Method = "Bitcoin";
+
+            var response = await PostPurchaseAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_ReferenceOver100Characters_Returns400()
+        {
+            var dto = Purchase("Partial", 15000m);
+            dto.Reference = new string('x', 101);
+
+            var response = await PostPurchaseAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_EmptyBody_Returns400()
+        {
+            var response = await _testClient.PostAsync("Vehicle/PurchaseVehicle",
+                new StringContent("{}", Encoding.UTF8, "application/json"));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        // ---- 400: business rules ----
+
+        [Fact]
+        public async Task PurchaseVehicle_AmountPaidAboveTotalCost_Returns400_NothingSaved()
+        {
+            var response = await PostPurchaseAsync(Purchase("PaidInFull", 40000.01m));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+            Assert.Equal(100000m, await BalanceAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_AmountPaidWithoutBankAccount_Returns400_NothingSaved()
+        {
+            var dto = Purchase("Partial", 15000m);
+            dto.Bank_Account_Id = null;
+
+            var response = await PostPurchaseAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_ConditionDoesNotMatchAmount_Returns400()
+        {
+            var response = await PostPurchaseAsync(Purchase("Credit", 100m));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_PaymentAboveBookBalance_Returns400_NothingSaved()
+        {
+            var poor = await InsertAccountAsync(10000m);
+            var dto = Purchase("Partial", 15000m);
+            dto.Bank_Account_Id = poor;
+
+            var response = await PostPurchaseAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+            Assert.Equal(0, await CountAsync(
+                @"SELECT COUNT(*) FROM ""transaction"" WHERE bank_account_id = @Id", new { Id = poor }));
+            Assert.Equal(0, await CountAsync(
+                "SELECT COUNT(*) FROM ap_bill a JOIN vehicle v ON v.id = a.vehicle_id WHERE v.vin ILIKE @Marker",
+                new { Marker = _marker + "%" }));
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_InactiveBankAccount_Returns400()
+        {
+            var inactive = await InsertAccountAsync(50000m, "inactive");
+            var dto = Purchase("Partial", 15000m);
+            dto.Bank_Account_Id = inactive;
+
+            var response = await PostPurchaseAsync(dto);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_DuplicateVin_Returns400()
+        {
+            Assert.Equal(HttpStatusCode.Created, (await PostPurchaseAsync(Purchase("Credit", 0m))).StatusCode);
+
+            var response = await PostPurchaseAsync(Purchase("Credit", 0m));
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(1, await VehicleCountAsync());
+        }
+
+        [Fact]
+        public async Task PurchaseVehicle_InactiveVendor_Returns400()
+        {
+            var inactive = await _vendorRepo.AddVendor(new VendorCreateDto
+            {
+                Name = $"{_marker} Inactive",
+                Type = VendorType.Vehicles,
+                Status = Status.Inactive
+            });
+            try
+            {
+                var dto = Purchase("Credit", 0m);
+                dto.Vendor_Id = inactive.Id;
+
+                var response = await PostPurchaseAsync(dto);
+
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            }
+            finally
+            {
+                await _vendorRepo.DeleteVendor(inactive.Id);
+            }
+        }
+
+        // ---- Routing ----
+
+        [Fact]
+        public async Task PurchaseVehicle_Get_IsNotAllowed()
+        {
+            var response = await _testClient.GetAsync("Vehicle/PurchaseVehicle");
+
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
         }
     }
 }
