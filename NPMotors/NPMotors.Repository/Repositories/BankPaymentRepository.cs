@@ -65,7 +65,7 @@ namespace NPMotors.Repository.Repositories
             var category = payment.Payment_Category.Trim();
             var reference = payment.Reference?.Trim();
             var description = payment.Description?.Trim();
-            var date = payment.Payment_Date.Date;
+            var date = payment.Payment_Date!.Value.Date;
 
             using IDbConnection connection = _context.GetDatabaseConnection();
             if (connection.State != ConnectionState.Open)
@@ -174,9 +174,8 @@ namespace NPMotors.Repository.Repositories
         // Cash | Check | Card | Transfer (any casing); returns the stored spelling.
         private static string ParsePaymentMethod(string? paymentMethod)
         {
-            if (!Enum.TryParse<PaymentMethod>(paymentMethod?.Trim(), true, out var method) || !Enum.IsDefined(method))
-                throw new ValidationException("Payment method must be Cash, Check, Card or Transfer.");
-            return method.ToString();
+            return Enum.GetNames<PaymentMethod>().FirstOrDefault(n => n.Equals(paymentMethod?.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? throw new ValidationException("Payment method must be Cash, Check, Card or Transfer.");
         }
 
         // Oldest first; payments are only ever inserted, so this is the full payment history.

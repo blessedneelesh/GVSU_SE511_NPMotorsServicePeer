@@ -33,7 +33,8 @@ namespace NPMotors.Services.Service
                 throw new ValidationException("Payment category is required.");
             if (payment.Amount <= 0)
                 throw new ValidationException("Amount must be greater than zero.");
-            if (!Enum.TryParse<PaymentMethod>(payment.Payment_Method?.Trim(), true, out var method) || !Enum.IsDefined(method))
+            var method = payment.Payment_Method?.Trim();
+            if (method is null || !Enum.GetNames<PaymentMethod>().Contains(method, StringComparer.OrdinalIgnoreCase))
                 throw new ValidationException("Payment method must be Cash, Check, Card or Transfer.");
             if (payment.Bank_Account_Id <= 0)
                 throw new ValidationException("A bank account is required.");

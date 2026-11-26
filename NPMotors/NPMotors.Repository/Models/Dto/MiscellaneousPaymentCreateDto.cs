@@ -18,7 +18,7 @@ namespace NPMotors.Repository.Models.Dto
         public long? Vendor_Id { get; set; }
 
         [Required]
-        public DateTime Payment_Date { get; set; }
+        public DateTime? Payment_Date { get; set; }
 
         [Required]
         [Range(typeof(decimal), "0.01", "999999999999.99", ErrorMessage = "Amount must be greater than zero.")]
