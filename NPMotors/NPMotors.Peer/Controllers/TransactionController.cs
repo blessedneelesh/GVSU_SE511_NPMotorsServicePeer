@@ -1,4 +1,6 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
+using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Abstractions.ServiceInterfaces;
 
@@ -27,6 +29,24 @@ namespace NPMotors.Peer.Controllers
         {
             var transaction = await _transactionService.GetTransactionById(id);
             return transaction is null ? NotFound() : Ok(transaction);
+        }
+
+        [HttpPost("{id:long}")]
+        public async Task<IActionResult> ReverseTransaction(long id, [FromBody] ReverseTransactionDto reversal)
+        {
+            try
+            {
+                var reversalTransaction = await _transactionService.ReverseTransaction(id, reversal);
+                return Ok(reversalTransaction);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
         }
     }
 }

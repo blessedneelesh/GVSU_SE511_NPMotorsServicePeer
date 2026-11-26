@@ -15,5 +15,7 @@ namespace NPMotors.Repository.Models.Dto
         public string? Reference { get; set; }
         public string BankAccountName { get; set; } = string.Empty;
         public long TransactionId { get; set; }
+        // "Posted", or "Reversed" once the receipt's transaction has been reversed (Story 23).
+        public string Status { get; set; } = string.Empty;
     }
 }

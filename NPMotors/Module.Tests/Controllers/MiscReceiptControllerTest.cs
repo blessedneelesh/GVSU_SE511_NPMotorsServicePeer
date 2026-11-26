@@ -190,6 +190,17 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
+        public async Task RecordMiscReceipt_Valid_Returns201WithStatusPosted()
+        {
+            var response = await RecordAsync(ReceiptBody());
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var text = await response.Content.ReadAsStringAsync();
+            Assert.Equal("Posted", JsonConvert.DeserializeObject<BankReceiptResponseDto>(text)!.Status);
+            Assert.Equal("Posted", JObject.Parse(text).GetValue("status", StringComparison.OrdinalIgnoreCase)!.ToString());
+        }
+
+        [Fact]
         public async Task RecordMiscReceipt_ReferenceOmitted_Returns201()
         {
             var response = await RecordAsync(new

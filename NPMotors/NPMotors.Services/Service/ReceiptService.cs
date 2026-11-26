@@ -228,7 +228,8 @@ namespace NPMotors.Services.Service
                 Reference = receipt.Reference,
                 Description = receipt.Description,
                 BankAccountName = account.Name ?? string.Empty,
-                TransactionId = receipt.TransactionId
+                TransactionId = receipt.TransactionId,
+                Status = receipt.Status
             };
         }
 
@@ -303,7 +304,8 @@ namespace NPMotors.Services.Service
                     PaymentMethod = r.PaymentMethod,
                     Reference = r.Reference,
                     BankAccountName = r.BankAccountName,
-                    TransactionId = r.TransactionId
+                    TransactionId = r.TransactionId,
+                    Status = r.Status
                 }).ToList()
             };
         }

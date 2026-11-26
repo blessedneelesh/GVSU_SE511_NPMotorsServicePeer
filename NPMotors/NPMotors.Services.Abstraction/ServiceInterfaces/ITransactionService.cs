@@ -7,5 +7,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
     {
         Task<PagedList<TransactionResponseDto>> GetAllTransactions(TransactionParameters parameters);
         Task<TransactionResponseDto?> GetTransactionById(long id);
+        Task<TransactionResponseDto> ReverseTransaction(long id, ReverseTransactionDto reversal);
     }
 }

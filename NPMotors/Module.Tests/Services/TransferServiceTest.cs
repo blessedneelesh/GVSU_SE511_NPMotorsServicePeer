@@ -112,6 +112,8 @@ namespace Module.Tests.Services
             public Task<long> InsertTransaction(Transaction transaction, IDbTransaction tx) => throw new NotSupportedException();
             public Task<PagedList<TransactionResponseDto>> GetAllTransactions(TransactionParameters p) => throw new NotSupportedException();
             public Task<TransactionResponseDto?> GetTransactionById(long id) => throw new NotSupportedException();
+            public Task<ReversalSourceDto?> GetTransactionForReversal(long id) => throw new NotSupportedException();
+            public Task<TransactionResponseDto> ReverseTransaction(ReversalPostingDto posting) => throw new NotSupportedException();
         }
 
         private class FakePostingService : NPMotors.Services.Abstractions.ServiceInterfaces.ITransactionPostingService
