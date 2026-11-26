@@ -15,6 +15,10 @@ namespace NPMotors.Repository.Models
         public string PaymentMethod { get; set; } = string.Empty;
         public string? Reference { get; set; }
         public decimal Amount { get; set; }
+        // Story 21: set for a payment not linked to AP (ApBillId and VehicleId stay null).
+        public string? Payee { get; set; }
+        public string? PaymentCategory { get; set; }
+        public string? Description { get; set; }
         public string Status { get; set; } = string.Empty;
     }
 }

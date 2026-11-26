@@ -137,6 +137,9 @@ namespace Module.Tests.Services
             public List<(BankPayment Payment, IDbTransaction Tx)> InsertCalls { get; } = new();
             public List<long> HistoryCalls { get; } = new();
 
+            public Task<BankPaymentResponseDto> RecordMiscellaneousPayment(MiscellaneousPaymentCreateDto payment) =>
+                throw new NotSupportedException();
+
             public Task<long> InsertBankPayment(BankPayment payment, IDbTransaction tx)
             {
                 _log.Add("insert-payment");
