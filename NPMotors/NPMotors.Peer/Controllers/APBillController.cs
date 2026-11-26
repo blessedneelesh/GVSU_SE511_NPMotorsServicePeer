@@ -24,6 +24,13 @@ namespace NPMotors.Peer.Controllers
             return Ok(new { items, metaData = items.MetaData });
         }
 
+        [HttpGet("/Ap/GetApById")]
+        public async Task<IActionResult> GetApById([FromQuery] long id)
+        {
+            var ap = await _apBillService.GetApById(id);
+            return ap is null ? NotFound() : Ok(ap);
+        }
+
         [HttpPost("{apBillId:long}")]
         public async Task<IActionResult> RecordVendorPayment(long apBillId, [FromBody] VendorPaymentCreateDto payment)
         {

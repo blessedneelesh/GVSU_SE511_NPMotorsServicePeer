@@ -8,5 +8,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
         Task<ApBillResponseDto?> RecordVendorPayment(long apBillId, VendorPaymentCreateDto payment);
         Task<ApBillResponseDto?> GetPaymentHistory(long apBillId);
         Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters);
+        Task<ApDetailDto?> GetApById(long id);
     }
 }

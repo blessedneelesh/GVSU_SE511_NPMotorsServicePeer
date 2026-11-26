@@ -107,5 +107,21 @@ namespace NPMotors.Repository.Repositories
 
             return new PagedList<ApAgingDto>(items, count, parameters.PageNumber, parameters.PageSize);
         }
+
+        // One AP bill with its vendor (name, contact, phone, email, address); null when not found.
+        public async Task<ApDetailDto?> GetApById(long id)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return await connection.QuerySingleOrDefaultAsync<ApDetailDto>(
+                @"SELECT ap.id AS Id, ap.number AS Number, ap.vendor_id AS VendorId, v.name AS Vendor,
+                         ap.vehicle_id AS VehicleId, ap.date AS Date, ap.due_date AS DueDate,
+                         ap.amount AS Amount, ap.paid AS Paid, ap.balance AS Balance, ap.status AS Status,
+                         v.contact AS Contact, v.phone AS Phone, v.email AS Email, v.address AS Address
+                  FROM ap_bill ap
+                  JOIN vendor v ON v.id = ap.vendor_id
+                  WHERE ap.id = @Id",
+                new { Id = id });
+        }
     }
 }

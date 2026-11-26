@@ -133,6 +133,14 @@ namespace NPMotors.Services.Service
             return items;
         }
 
+        public async Task<ApDetailDto?> GetApById(long id)
+        {
+            var ap = await _apBillRepository.GetApById(id);
+            if (ap is not null)
+                ap.Days = CalculateDaysOverdue(ap.DueDate, DateTime.Today);
+            return ap;
+        }
+
         // max(0, (asOfDate - dueDate).Days); 0 when dueDate is null.
         private static int CalculateDaysOverdue(DateTime? dueDate, DateTime asOfDate)
         {

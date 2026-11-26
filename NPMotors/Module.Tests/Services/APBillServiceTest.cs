@@ -108,6 +108,16 @@ namespace Module.Tests.Services
             public PagedList<ApAgingDto> Page { get; set; } = new(new List<ApAgingDto>(), 0, 1, 5);
             public List<ApAgingParameters> AllApCalls { get; } = new();
 
+            public ApDetailDto? Detail { get; set; }
+            public List<long> DetailCalls { get; } = new();
+
+            public Task<ApDetailDto?> GetApById(long id)
+            {
+                _log.Add("get-ap-detail");
+                DetailCalls.Add(id);
+                return Task.FromResult(Detail);
+            }
+
             public Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters)
             {
                 _log.Add("get-all-ap");
