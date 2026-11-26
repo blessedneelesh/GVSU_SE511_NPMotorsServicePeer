@@ -11,5 +11,7 @@ namespace NPMotors.Repository.Interface
         Task<long> InsertTransaction(Transaction transaction, IDbTransaction tx);
         Task<PagedList<TransactionResponseDto>> GetAllTransactions(TransactionParameters parameters);
         Task<TransactionResponseDto?> GetTransactionById(long id);
+        Task<ReversalSourceDto?> GetTransactionForReversal(long id);
+        Task<TransactionResponseDto> ReverseTransaction(ReversalPostingDto posting);
     }
 }

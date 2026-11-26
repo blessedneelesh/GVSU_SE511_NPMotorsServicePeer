@@ -31,6 +31,12 @@ namespace Module.Tests.Services
                 return Task.FromResult(GetByIdResult);
             }
 
+            public Task<ReversalSourceDto?> GetTransactionForReversal(long id) =>
+                throw new NotSupportedException();
+
+            public Task<TransactionResponseDto> ReverseTransaction(ReversalPostingDto posting) =>
+                throw new NotSupportedException();
+
             public Task<long> GetNextTransactionId(IDbTransaction tx) =>
                 throw new NotSupportedException();
 

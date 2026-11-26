@@ -16,6 +16,8 @@ namespace NPMotors.Repository.Models
         public string? Description { get; set; }
         public TransactionStatus Status { get; set; }
         public string? TransferReference { get; set; }
+        public long? ReversesTransactionId { get; set; }
+        public string? ReversalReason { get; set; }
         public DateTime CreatedAt { get; set; }
         public string CreatedBy { get; set; } = string.Empty;
     }
