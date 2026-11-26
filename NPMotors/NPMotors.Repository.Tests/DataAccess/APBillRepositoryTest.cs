@@ -4,6 +4,7 @@ using NPMotors.Repository.Models;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
 using NPMotors.Repository.Repositories;
+using NPMotors.Repository.RequestFeatures;
 
 namespace NPMotors.Repository.Tests.DataAccess
 {
@@ -398,6 +399,151 @@ namespace NPMotors.Repository.Tests.DataAccess
                 Assert.Equal(0m, await connection.ExecuteScalarAsync<decimal>(
                     "SELECT balance FROM vendor WHERE id = @Id", new { Id = _vendorId }));
             }
+        }
+
+        // ---- GetAllAp. As-of dates below are relative to the seeded due date 2026-12-01. ----
+        // Vendor: open bill (partial, balance 2500) and paid bill (balance 0), both due 2026-12-01.
+        // Other vendor: one unpaid bill (700) due 2026-12-01.
+
+        private static readonly DateTime BeforeDue = new(2026, 11, 8);
+        private static readonly DateTime AfterDue = new(2026, 12, 2);
+
+        private Task<PagedList<ApAgingDto>> GetAllApAsync(string? status = null, long? vendorId = null, DateTime? asOf = null,
+            int pageNumber = 1, int pageSize = 100) =>
+            _repository.GetAllAp(new ApAgingParameters
+            {
+                Status = status, VendorId = vendorId ?? _vendorId, AsOfDate = asOf ?? BeforeDue,
+                PageNumber = pageNumber, PageSize = pageSize
+            });
+
+        [Fact]
+        public async Task GetAllAp_NoStatus_ReturnsEveryBillOfTheVendorPaidIncluded()
+        {
+            var result = await GetAllApAsync();
+
+            Assert.Equal(new[] { _openBillId, _paidBillId }.OrderBy(x => x), result.Select(r => r.Id).OrderBy(x => x));
+            Assert.Equal(2, result.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetAllAp_ReturnsStoredColumnsAndVendorName()
+        {
+            var item = (await GetAllApAsync()).Single(r => r.Id == _openBillId);
+
+            Assert.StartsWith($"AP-{_marker}-", item.Number);
+            Assert.Equal(_vendorId, item.VendorId);
+            Assert.Equal($"{_marker} Vendor", item.Vendor_Name);
+            Assert.Equal(new DateTime(2026, 12, 1), item.Due_Date);
+            Assert.Equal(4000m, item.Amount);
+            Assert.Equal(1500m, item.Paid);
+            Assert.Equal(2500m, item.Balance);
+            Assert.Equal("partial", item.Status);
+        }
+
+        [Fact]
+        public async Task GetAllAp_LeavesCalculatedFieldsToTheService()
+        {
+            var item = (await GetAllApAsync()).Single(r => r.Id == _openBillId);
+
+            Assert.Equal(0, item.Days_Overdue);
+            Assert.Equal(string.Empty, item.Aging_Status);
+        }
+
+        [Fact]
+        public async Task GetAllAp_VendorFilter_ExcludesOtherVendors()
+        {
+            var result = await GetAllApAsync(vendorId: _otherVendorId);
+
+            Assert.Equal(_otherVendorBillId, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllAp_VendorWithoutBills_ReturnsEmpty()
+        {
+            var result = await GetAllApAsync(vendorId: _emptyVendorId);
+
+            Assert.Empty(result);
+            Assert.Equal(0, result.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetAllAp_Overdue_OpenBillsPastDueOnly()
+        {
+            var result = await GetAllApAsync("Overdue", asOf: AfterDue);
+
+            Assert.Equal(_openBillId, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllAp_Overdue_NothingBeforeTheDueDate()
+        {
+            Assert.Empty(await GetAllApAsync("Overdue", asOf: BeforeDue));
+        }
+
+        [Fact]
+        public async Task GetAllAp_Overdue_NotOnTheDueDateItself()
+        {
+            Assert.Empty(await GetAllApAsync("Overdue", asOf: new DateTime(2026, 12, 1)));
+        }
+
+        [Fact]
+        public async Task GetAllAp_Partial_StoredStatusAndNotPastDue()
+        {
+            Assert.Equal(_openBillId, Assert.Single(await GetAllApAsync("Partial", asOf: BeforeDue)).Id);
+            Assert.Empty(await GetAllApAsync("Partial", asOf: AfterDue));
+        }
+
+        [Fact]
+        public async Task GetAllAp_Unpaid_StoredStatusIsCaseInsensitive()
+        {
+            var result = await GetAllApAsync("UNPAID", vendorId: _otherVendorId, asOf: BeforeDue);
+
+            Assert.Equal(_otherVendorBillId, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllAp_Paid_BalanceZeroOrLess()
+        {
+            var result = await GetAllApAsync("Paid", asOf: AfterDue);
+
+            Assert.Equal(_paidBillId, Assert.Single(result).Id);
+        }
+
+        [Fact]
+        public async Task GetAllAp_UnknownStatus_IsIgnored()
+        {
+            Assert.Equal(2, (await GetAllApAsync("whatever")).Count);
+        }
+
+        [Fact]
+        public async Task GetAllAp_OrderedByDueDate()
+        {
+            var result = await GetAllApAsync();
+
+            Assert.Equal(result.OrderBy(r => r.Due_Date).Select(r => r.Due_Date), result.Select(r => r.Due_Date));
+        }
+
+        [Fact]
+        public async Task GetAllAp_Paging_SplitsRowsAndKeepsTotalCount()
+        {
+            var first = await GetAllApAsync(pageNumber: 1, pageSize: 1);
+            var second = await GetAllApAsync(pageNumber: 2, pageSize: 1);
+
+            Assert.Single(first);
+            Assert.Single(second);
+            Assert.NotEqual(first[0].Id, second[0].Id);
+            Assert.Equal(2, first.MetaData.TotalCount);
+            Assert.Equal(2, first.MetaData.TotalPages);
+            Assert.Equal(2, second.MetaData.CurrentPage);
+        }
+
+        [Fact]
+        public async Task GetAllAp_PageBeyondTheEnd_ReturnsEmptyWithTotalCount()
+        {
+            var result = await GetAllApAsync(pageNumber: 5, pageSize: 1);
+
+            Assert.Empty(result);
+            Assert.Equal(2, result.MetaData.TotalCount);
         }
     }
 }

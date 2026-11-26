@@ -104,6 +104,16 @@ namespace Module.Tests.Services
                 OpenBalanceCalls.Add((vendorId, tx));
                 return Task.FromResult(OpenBalance);
             }
+
+            public PagedList<ApAgingDto> Page { get; set; } = new(new List<ApAgingDto>(), 0, 1, 5);
+            public List<ApAgingParameters> AllApCalls { get; } = new();
+
+            public Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters)
+            {
+                _log.Add("get-all-ap");
+                AllApCalls.Add(parameters);
+                return Task.FromResult(Page);
+            }
         }
 
         private class FakeBankPaymentRepository : IBankPaymentRepository
@@ -852,6 +862,147 @@ namespace Module.Tests.Services
             Assert.DoesNotContain("open", _log);
             Assert.DoesNotContain("begin", _log);
             AssertNothingSaved();
+        }
+
+        // ---- GetAllAp: CalculateDaysOverdue and DetermineAgingStatus (private static, tested through GetAllAp). As-of 2026-11-08. ----
+
+        private static readonly DateTime AsOf = new(2026, 11, 8);
+
+        private static ApAgingDto AgingItem(DateTime? due, decimal balance = 500m, string status = "unpaid") => new()
+        {
+            Id = 1, Number = "AP-2026-000001", VendorId = 3, Vendor_Name = "Acme Motors",
+            Due_Date = due, Amount = 1000m, Paid = 1000m - balance, Balance = balance, Status = status
+        };
+
+        private async Task<ApAgingDto> AgeSingleAsync(DateTime? due, decimal balance = 500m, string status = "unpaid", DateTime? asOf = null)
+        {
+            _bills.Page = new PagedList<ApAgingDto>(new List<ApAgingDto> { AgingItem(due, balance, status) }, 1, 1, 5);
+            var result = await _service.GetAllAp(new ApAgingParameters { AsOfDate = asOf ?? AsOf });
+            return Assert.Single(result);
+        }
+
+        [Fact]
+        public async Task GetAllAp_DueTenDaysBeforeAsOf_DaysOverdueIs10()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 10, 29));
+
+            Assert.Equal(10, item.Days_Overdue);
+        }
+
+        [Fact]
+        public async Task GetAllAp_DueOnAsOfDate_DaysOverdueIsZero()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 11, 8));
+
+            Assert.Equal(0, item.Days_Overdue);
+        }
+
+        [Fact]
+        public async Task GetAllAp_DueAfterAsOf_DaysOverdueNeverBelowZero()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 12, 1));
+
+            Assert.Equal(0, item.Days_Overdue);
+        }
+
+        [Fact]
+        public async Task GetAllAp_NoDueDate_DaysOverdueIsZero()
+        {
+            var item = await AgeSingleAsync(null);
+
+            Assert.Equal(0, item.Days_Overdue);
+        }
+
+        [Fact]
+        public async Task GetAllAp_DueDateWithTimeOfDay_CountsWholeDays()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 11, 7, 23, 59, 0), asOf: new DateTime(2026, 11, 8, 0, 1, 0));
+
+            Assert.Equal(1, item.Days_Overdue);
+        }
+
+        [Fact]
+        public async Task GetAllAp_OpenBillPastDue_StatusIsOverdue()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 10, 1), balance: 600m, status: "partial");
+
+            Assert.Equal("Overdue", item.Aging_Status);
+        }
+
+        [Fact]
+        public async Task GetAllAp_OpenBillNotYetDue_KeepsStoredStatus()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 12, 1), status: "unpaid");
+
+            Assert.Equal("unpaid", item.Aging_Status);
+        }
+
+        [Fact]
+        public async Task GetAllAp_NoDueDate_KeepsStoredStatus()
+        {
+            var item = await AgeSingleAsync(null, status: "partial");
+
+            Assert.Equal("partial", item.Aging_Status);
+        }
+
+        [Fact]
+        public async Task GetAllAp_PaidBillPastDue_IsNotOverdue()
+        {
+            var item = await AgeSingleAsync(new DateTime(2026, 9, 1), balance: 0m, status: "paid");
+
+            Assert.Equal("paid", item.Aging_Status);
+            Assert.Equal(68, item.Days_Overdue);
+        }
+
+        [Fact]
+        public async Task GetAllAp_NoAsOfDate_DefaultsToToday()
+        {
+            var parameters = new ApAgingParameters();
+
+            await _service.GetAllAp(parameters);
+
+            Assert.Equal(DateTime.Today, parameters.AsOfDate);
+        }
+
+        [Fact]
+        public async Task GetAllAp_PassesParametersToRepository()
+        {
+            var parameters = new ApAgingParameters { AsOfDate = AsOf, Status = "Overdue", VendorId = 3, PageNumber = 2, PageSize = 10 };
+
+            await _service.GetAllAp(parameters);
+
+            Assert.Same(parameters, Assert.Single(_bills.AllApCalls));
+        }
+
+        [Fact]
+        public async Task GetAllAp_ReturnsTheSamePageWithMetaDataIntact()
+        {
+            var page = new PagedList<ApAgingDto>(
+                new List<ApAgingDto> { AgingItem(new DateTime(2026, 10, 1)), AgingItem(new DateTime(2026, 12, 1)) }, 12, 2, 2);
+            _bills.Page = page;
+
+            var result = await _service.GetAllAp(new ApAgingParameters { AsOfDate = AsOf, PageNumber = 2, PageSize = 2 });
+
+            Assert.Same(page, result);
+            Assert.Equal(12, result.MetaData.TotalCount);
+            Assert.Equal(2, result.MetaData.CurrentPage);
+            Assert.Equal(2, result.Count);
+        }
+
+        [Fact]
+        public async Task GetAllAp_EmptyPage_ReturnsEmpty()
+        {
+            var result = await _service.GetAllAp(new ApAgingParameters { AsOfDate = AsOf });
+
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public async Task GetAllAp_OnlyReadsTheBills()
+        {
+            await _service.GetAllAp(new ApAgingParameters { AsOfDate = AsOf });
+
+            Assert.Equal(new[] { "get-all-ap" }, _log);
         }
     }
 }
