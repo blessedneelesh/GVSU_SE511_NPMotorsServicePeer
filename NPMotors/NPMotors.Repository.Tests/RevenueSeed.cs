@@ -15,6 +15,7 @@ namespace NPMotors.Repository.Tests
         public long AccountId { get; private set; }
         public long CustomerId { get; private set; }
         public long SalespersonId { get; private set; }
+        public long VendorId { get; private set; }
 
         public RevenueSeed(Func<IDbConnection> open)
         {
@@ -34,6 +35,8 @@ namespace NPMotors.Repository.Tests
                 "INSERT INTO customer (first_name, last_name) VALUES (@Name, 'Buyer') RETURNING id", new { Name = Marker });
             SalespersonId = await c.ExecuteScalarAsync<long>(
                 "INSERT INTO employee (first_name, last_name) VALUES (@Name, 'Seller') RETURNING id", new { Name = Marker });
+            VendorId = await c.ExecuteScalarAsync<long>(
+                "INSERT INTO vendor (name) VALUES (@Name) RETURNING id", new { Name = $"{Marker} Vendor" });
         }
 
         public async Task CleanupAsync()
@@ -45,6 +48,9 @@ namespace NPMotors.Repository.Tests
             await c.ExecuteAsync($@"DELETE FROM ""transaction"" WHERE reverses_transaction_id IS NOT NULL AND bank_account_id IN ({accounts})", p);
             await c.ExecuteAsync($@"DELETE FROM ""transaction"" WHERE bank_account_id IN ({accounts})", p);
             await c.ExecuteAsync("DELETE FROM sales_invoice WHERE customer_id IN (SELECT id FROM customer WHERE first_name LIKE @Pattern)", p);
+            await c.ExecuteAsync("DELETE FROM ap_bill WHERE vendor_id = @VendorId", new { VendorId });
+            await c.ExecuteAsync("DELETE FROM vehicle WHERE vendor_id = @VendorId", new { VendorId });
+            await c.ExecuteAsync("DELETE FROM vendor WHERE id = @VendorId", new { VendorId });
             await c.ExecuteAsync("DELETE FROM customer WHERE first_name LIKE @Pattern", p);
             await c.ExecuteAsync("DELETE FROM employee WHERE first_name LIKE @Pattern", p);
             await c.ExecuteAsync("DELETE FROM bank_account WHERE bank_id = @BankId", p);
@@ -54,22 +60,51 @@ namespace NPMotors.Repository.Tests
         private int Next() => ++_sequence;
 
         public async Task<long> AddInvoiceAsync(DateTime date, decimal salePrice, decimal fees = 0m, decimal discount = 0m, decimal tax = 0m,
-            string lifecycle = "posted", string paymentStatus = "unpaid")
+            string lifecycle = "posted", string paymentStatus = "unpaid", long? vehicleId = null)
         {
             using var c = _open();
             var total = salePrice + tax + fees - discount;
             var paid = paymentStatus == "paid" ? total : 0m;
             return await c.ExecuteScalarAsync<long>(
-                @"INSERT INTO sales_invoice (number, date, customer_id, salesperson_id, sale_price, tax, fees, discount, total, paid, balance,
+                @"INSERT INTO sales_invoice (number, date, customer_id, salesperson_id, vehicle_id, sale_price, tax, fees, discount, total, paid, balance,
                                              payment_status, lifecycle, cancel_reason, created_by)
-                  VALUES (@Number, @Date, @CustomerId, @SalespersonId, @SalePrice, @Tax, @Fees, @Discount, @Total, @Paid, @Balance,
+                  VALUES (@Number, @Date, @CustomerId, @SalespersonId, @VehicleId, @SalePrice, @Tax, @Fees, @Discount, @Total, @Paid, @Balance,
                           @PaymentStatus, @Lifecycle, @CancelReason, 'itest')
                   RETURNING id",
                 new
                 {
-                    Number = $"{Marker}-SI-{Next()}", Date = date.Date, CustomerId, SalespersonId, SalePrice = salePrice, Tax = tax,
+                    Number = $"{Marker}-SI-{Next()}", Date = date.Date, CustomerId, SalespersonId, VehicleId = vehicleId, SalePrice = salePrice, Tax = tax,
                     Fees = fees, Discount = discount, Total = total, Paid = paid, Balance = total - paid, PaymentStatus = paymentStatus,
                     Lifecycle = lifecycle, CancelReason = lifecycle == "cancelled" ? "itest cancel" : null
+                });
+        }
+
+        // A vehicle of the seeded vendor with a stored total_cost (purchase_price + additional_costs).
+        public async Task<long> AddVehicleAsync(decimal purchasePrice, decimal additionalCosts = 0m, string status = "available")
+        {
+            using var c = _open();
+            return await c.ExecuteScalarAsync<long>(
+                @"INSERT INTO vehicle (vin, vendor_id, make, model, purchase_price, additional_costs, total_cost, selling_price, status, created_by)
+                  VALUES (@Vin, @VendorId, 'Honda', 'Civic', @Purchase, @Additional, @Total, 0, @Status, 'itest')
+                  RETURNING id",
+                new
+                {
+                    Vin = Guid.NewGuid().ToString("N").Substring(0, 17).ToUpperInvariant(), VendorId, Purchase = purchasePrice,
+                    Additional = additionalCosts, Total = purchasePrice + additionalCosts, Status = status
+                });
+        }
+
+        // An AP bill for the seeded vendor (the vendor side of a vehicle purchase).
+        public async Task AddApBillAsync(decimal amount, decimal paid)
+        {
+            using var c = _open();
+            await c.ExecuteAsync(
+                @"INSERT INTO ap_bill (number, vendor_id, amount, paid, balance, status, created_by)
+                  VALUES (@Number, @VendorId, @Amount, @Paid, @Balance, @Status, 'itest')",
+                new
+                {
+                    Number = $"{Marker}-AP-{Next()}", VendorId, Amount = amount, Paid = paid, Balance = amount - paid,
+                    Status = paid >= amount ? "paid" : paid > 0 ? "partial" : "unpaid"
                 });
         }
 
