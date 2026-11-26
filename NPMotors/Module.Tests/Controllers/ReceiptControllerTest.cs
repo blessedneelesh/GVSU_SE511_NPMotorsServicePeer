@@ -491,6 +491,49 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
+        public async Task GetPaymentHistory_EveryPaymentShowsStatusPosted()
+        {
+            var (arId, _) = await CreateOpenArAsync();
+            await PayAsync(arId, PaymentBody(1000m, date: "2026-12-01"));
+
+            var response = await _testClient.GetAsync($"Receipt/GetPaymentHistory/{arId}");
+            var body = await ReadAsync(response);
+            var json = await ReadJsonAsync(await _testClient.GetAsync($"Receipt/GetPaymentHistory/{arId}"));
+
+            Assert.Equal(new[] { "Posted", "Posted" }, body.Payments.Select(p => p.Status).ToArray());
+            var payment = (JObject)((JArray)json.GetValue("payments", StringComparison.OrdinalIgnoreCase)!)[0];
+            Assert.Equal("Posted", payment.GetValue("status", StringComparison.OrdinalIgnoreCase)!.ToString());
+        }
+
+        [Fact]
+        public async Task RecordArPayment_ResponsePaymentsCarryTheirStatus()
+        {
+            var (arId, _) = await CreateOpenArAsync();
+
+            var body = await ReadAsync(await PayAsync(arId, PaymentBody(4000m)));
+
+            Assert.Equal(new[] { "Posted", "Posted" }, body.Payments.Select(p => p.Status).ToArray());
+        }
+
+        // Story 23: a reversed receipt stays in the history and shows "Reversed"; the others stay "Posted".
+        [Fact]
+        public async Task GetPaymentHistory_AfterAReceiptIsReversed_ThatPaymentShowsReversed()
+        {
+            var (arId, _) = await CreateOpenArAsync();
+            var paid = await ReadAsync(await PayAsync(arId, PaymentBody(4000m)));
+            var laterPayment = paid.Payments.Single(p => p.Amount == 4000m);
+
+            var reversal = await _testClient.PostAsync(
+                $"Transaction/ReverseTransaction/{laterPayment.TransactionId}", Json(new { reason = "Wrong amount" }));
+            var body = await ReadAsync(await _testClient.GetAsync($"Receipt/GetPaymentHistory/{arId}"));
+
+            Assert.Equal(HttpStatusCode.OK, reversal.StatusCode);
+            Assert.Equal(2, body.Payments.Count);
+            Assert.Equal("Posted", body.Payments.Single(p => p.Amount == FirstPayment).Status);
+            Assert.Equal("Reversed", body.Payments.Single(p => p.Id == laterPayment.Id).Status);
+        }
+
+        [Fact]
         public async Task GetPaymentHistory_UnknownAr_Returns404()
         {
             var response = await _testClient.GetAsync($"Receipt/GetPaymentHistory/{long.MaxValue}");

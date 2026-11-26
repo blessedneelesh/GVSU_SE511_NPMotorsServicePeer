@@ -331,6 +331,14 @@ namespace Module.Tests.Services
         }
 
         [Fact]
+        public async Task RecordMiscReceipt_Valid_ReturnsStatusPosted()
+        {
+            var result = await _service.RecordMiscReceipt(Request());
+
+            Assert.Equal("Posted", result.Status);
+        }
+
+        [Fact]
         public async Task RecordMiscReceipt_AccountWithoutName_ReturnsEmptyBankAccountName()
         {
             _accounts.Account = new BankAccountResponseDto { Id = 1, Name = null, Status = Status.Active };

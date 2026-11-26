@@ -847,6 +847,20 @@ namespace Module.Tests.Services
         }
 
         [Fact]
+        public async Task GetPaymentHistory_MapsTheStatusOfEachReceipt()
+        {
+            _receipts.History = new List<BankReceipt>
+            {
+                new() { Id = 1, ReceiptNumber = "RCT-2026-000001", Amount = 5000m, Status = "Reversed" },
+                new() { Id = 9, ReceiptNumber = "RCT-2026-000009", Amount = 2500m, Status = "Posted" }
+            };
+
+            var result = await _service.GetPaymentHistory(7);
+
+            Assert.Equal(new[] { "Reversed", "Posted" }, result!.Payments.Select(p => p.Status).ToArray());
+        }
+
+        [Fact]
         public async Task GetPaymentHistory_NoReceipts_ReturnsEmptyPaymentsNotNull()
         {
             var result = await _service.GetPaymentHistory(7);
