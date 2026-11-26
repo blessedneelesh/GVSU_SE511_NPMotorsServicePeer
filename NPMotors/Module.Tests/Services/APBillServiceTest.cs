@@ -105,8 +105,8 @@ namespace Module.Tests.Services
                 return Task.FromResult(OpenBalance);
             }
 
-            public PagedList<ApAgingDto> Page { get; set; } = new(new List<ApAgingDto>(), 0, 1, 5);
-            public List<ApAgingParameters> AllApCalls { get; } = new();
+            public PagedList<ApBillResponseDto> Page { get; set; } = new(new List<ApBillResponseDto>(), 0, 1, 5);
+            public List<ApBillParameters> AllApCalls { get; } = new();
 
             public ApDetailDto? Detail { get; set; }
             public List<long> DetailCalls { get; } = new();
@@ -118,7 +118,7 @@ namespace Module.Tests.Services
                 return Task.FromResult(Detail);
             }
 
-            public Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters)
+            public Task<PagedList<ApBillResponseDto>> GetAllApBills(ApBillParameters parameters)
             {
                 _log.Add("get-all-ap");
                 AllApCalls.Add(parameters);
@@ -881,21 +881,21 @@ namespace Module.Tests.Services
 
         private static readonly DateTime AsOf = new(2026, 11, 8);
 
-        private static ApAgingDto AgingItem(DateTime? due, decimal balance = 500m, string status = "unpaid") => new()
+        private static ApBillResponseDto AgingItem(DateTime? due, decimal balance = 500m, string status = "unpaid") => new()
         {
-            Id = 1, Number = "AP-2026-000001", VendorId = 3, Vendor_Name = "Acme Motors",
+            Id = 1, Number = "AP-2026-000001", Vendor_Id = 3, Vendor_Name = "Acme Motors",
             Due_Date = due, Amount = 1000m, Paid = 1000m - balance, Balance = balance, Status = status
         };
 
-        private async Task<ApAgingDto> AgeSingleAsync(DateTime? due, decimal balance = 500m, string status = "unpaid", DateTime? asOf = null)
+        private async Task<ApBillResponseDto> AgeSingleAsync(DateTime? due, decimal balance = 500m, string status = "unpaid", DateTime? asOf = null)
         {
-            _bills.Page = new PagedList<ApAgingDto>(new List<ApAgingDto> { AgingItem(due, balance, status) }, 1, 1, 5);
-            var result = await _service.GetAllAp(new ApAgingParameters { AsOfDate = asOf ?? AsOf });
+            _bills.Page = new PagedList<ApBillResponseDto>(new List<ApBillResponseDto> { AgingItem(due, balance, status) }, 1, 1, 5);
+            var result = await _service.GetAllApBills(new ApBillParameters { AsOfDate = asOf ?? AsOf });
             return Assert.Single(result);
         }
 
         [Fact]
-        public async Task GetAllAp_DueTenDaysBeforeAsOf_DaysOverdueIs10()
+        public async Task GetAllApBills_DueTenDaysBeforeAsOf_DaysOverdueIs10()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 29));
 
@@ -903,7 +903,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetAllAp_DueOnAsOfDate_DaysOverdueIsZero()
+        public async Task GetAllApBills_DueOnAsOfDate_DaysOverdueIsZero()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 8));
 
@@ -911,7 +911,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetAllAp_DueAfterAsOf_DaysOverdueNeverBelowZero()
+        public async Task GetAllApBills_DueAfterAsOf_DaysOverdueNeverBelowZero()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 12, 1));
 
@@ -919,7 +919,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetAllAp_NoDueDate_DaysOverdueIsZero()
+        public async Task GetAllApBills_NoDueDate_DaysOverdueIsZero()
         {
             var item = await AgeSingleAsync(null);
 
@@ -927,7 +927,7 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetAllAp_DueDateWithTimeOfDay_CountsWholeDays()
+        public async Task GetAllApBills_DueDateWithTimeOfDay_CountsWholeDays()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 11, 7, 23, 59, 0), asOf: new DateTime(2026, 11, 8, 0, 1, 0));
 
@@ -935,66 +935,66 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetAllAp_OpenBillPastDue_StatusIsOverdue()
+        public async Task GetAllApBills_OpenBillPastDue_StatusIsOverdue()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 10, 1), balance: 600m, status: "partial");
 
-            Assert.Equal("Overdue", item.Aging_Status);
+            Assert.Equal("Overdue", item.Status);
         }
 
         [Fact]
-        public async Task GetAllAp_OpenBillNotYetDue_KeepsStoredStatus()
+        public async Task GetAllApBills_OpenBillNotYetDue_KeepsStoredStatus()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 12, 1), status: "unpaid");
 
-            Assert.Equal("unpaid", item.Aging_Status);
+            Assert.Equal("unpaid", item.Status);
         }
 
         [Fact]
-        public async Task GetAllAp_NoDueDate_KeepsStoredStatus()
+        public async Task GetAllApBills_NoDueDate_KeepsStoredStatus()
         {
             var item = await AgeSingleAsync(null, status: "partial");
 
-            Assert.Equal("partial", item.Aging_Status);
+            Assert.Equal("partial", item.Status);
         }
 
         [Fact]
-        public async Task GetAllAp_PaidBillPastDue_IsNotOverdue()
+        public async Task GetAllApBills_PaidBillPastDue_IsNotOverdue()
         {
             var item = await AgeSingleAsync(new DateTime(2026, 9, 1), balance: 0m, status: "paid");
 
-            Assert.Equal("paid", item.Aging_Status);
+            Assert.Equal("paid", item.Status);
             Assert.Equal(68, item.Days_Overdue);
         }
 
         [Fact]
-        public async Task GetAllAp_NoAsOfDate_DefaultsToToday()
+        public async Task GetAllApBills_NoAsOfDate_DefaultsToToday()
         {
-            var parameters = new ApAgingParameters();
+            var parameters = new ApBillParameters();
 
-            await _service.GetAllAp(parameters);
+            await _service.GetAllApBills(parameters);
 
             Assert.Equal(DateTime.Today, parameters.AsOfDate);
         }
 
         [Fact]
-        public async Task GetAllAp_PassesParametersToRepository()
+        public async Task GetAllApBills_PassesParametersToRepository()
         {
-            var parameters = new ApAgingParameters { AsOfDate = AsOf, Status = "Overdue", VendorId = 3, PageNumber = 2, PageSize = 10 };
+            var parameters = new ApBillParameters { AsOfDate = AsOf, Status = "Overdue", VendorId = 3, PageNumber = 2, PageSize = 10 };
 
-            await _service.GetAllAp(parameters);
+            await _service.GetAllApBills(parameters);
 
             Assert.Same(parameters, Assert.Single(_bills.AllApCalls));
         }
 
         [Fact]
-        public async Task GetAllAp_ReturnsTheSamePageWithMetaDataIntact()
+        public async Task GetAllApBills_ReturnsTheSamePageWithMetaDataIntact()
         {
-            var page = new PagedList<ApAgingDto>(
-                new List<ApAgingDto> { AgingItem(new DateTime(2026, 10, 1)), AgingItem(new DateTime(2026, 12, 1)) }, 12, 2, 2);
+            var page = new PagedList<ApBillResponseDto>(
+                new List<ApBillResponseDto> { AgingItem(new DateTime(2026, 10, 1)), AgingItem(new DateTime(2026, 12, 1)) }, 12, 2, 2);
             _bills.Page = page;
 
-            var result = await _service.GetAllAp(new ApAgingParameters { AsOfDate = AsOf, PageNumber = 2, PageSize = 2 });
+            var result = await _service.GetAllApBills(new ApBillParameters { AsOfDate = AsOf, PageNumber = 2, PageSize = 2 });
 
             Assert.Same(page, result);
             Assert.Equal(12, result.MetaData.TotalCount);
@@ -1002,10 +1002,24 @@ namespace Module.Tests.Services
             Assert.Equal(2, result.Count);
         }
 
-        [Fact]
-        public async Task GetAllAp_EmptyPage_ReturnsEmpty()
+        [Theory]
+        [InlineData(0, 5, null, null)]
+        [InlineData(1, 0, null, null)]
+        [InlineData(1, 5, 0L, null)]
+        [InlineData(1, 5, null, "paid")]
+        [InlineData(1, 5, null, "whatever")]
+        public async Task GetAllApBills_InvalidParameters_ThrowsAndSkipsRepository(int pageNumber, int pageSize, long? vendorId, string? status)
         {
-            var result = await _service.GetAllAp(new ApAgingParameters { AsOfDate = AsOf });
+            var parameters = new ApBillParameters { PageNumber = pageNumber, PageSize = pageSize, VendorId = vendorId, Status = status };
+
+            await Assert.ThrowsAsync<ValidationException>(() => _service.GetAllApBills(parameters));
+            Assert.Empty(_bills.AllApCalls);
+        }
+
+        [Fact]
+        public async Task GetAllApBills_EmptyPage_ReturnsEmpty()
+        {
+            var result = await _service.GetAllApBills(new ApBillParameters { AsOfDate = AsOf });
 
             Assert.Empty(result);
         }
@@ -1102,9 +1116,9 @@ namespace Module.Tests.Services
         }
 
         [Fact]
-        public async Task GetAllAp_OnlyReadsTheBills()
+        public async Task GetAllApBills_OnlyReadsTheBills()
         {
-            await _service.GetAllAp(new ApAgingParameters { AsOfDate = AsOf });
+            await _service.GetAllApBills(new ApBillParameters { AsOfDate = AsOf });
 
             Assert.Equal(new[] { "get-all-ap" }, _log);
         }

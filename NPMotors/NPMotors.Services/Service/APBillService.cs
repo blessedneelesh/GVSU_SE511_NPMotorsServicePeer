@@ -119,18 +119,31 @@ namespace NPMotors.Services.Service
             return await BuildResponse(apBillId);
         }
 
-        public async Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters)
+        public async Task<PagedList<ApBillResponseDto>> GetAllApBills(ApBillParameters parameters)
         {
-            parameters.AsOfDate ??= DateTime.Today;
-            var asOfDate = parameters.AsOfDate.Value;
+            ValidateApBillParameters(parameters);
 
-            var items = await _apBillRepository.GetAllAp(parameters);
-            foreach (var item in items)
+            var asOfDate = parameters.AsOfDate ??= DateTime.Today;
+
+            var page = await _apBillRepository.GetAllApBills(parameters);
+            foreach (var item in page)
             {
                 item.Days_Overdue = CalculateDaysOverdue(item.Due_Date, asOfDate);
-                item.Aging_Status = DetermineAgingStatus(item.Balance, item.Status, item.Days_Overdue);
+                item.Status = DetermineAgingStatus(item.Balance, item.Status, item.Days_Overdue);
             }
-            return items;
+            return page;
+        }
+
+        // PageNumber and PageSize >= 1, VendorId > 0 when given, Status "unpaid" | "partial" | "overdue" or empty.
+        private static void ValidateApBillParameters(ApBillParameters parameters)
+        {
+            if (parameters.PageNumber < 1 || parameters.PageSize < 1)
+                throw new ValidationException("PageNumber and PageSize must be at least 1.");
+            if (parameters.VendorId is <= 0)
+                throw new ValidationException("VendorId must be greater than zero.");
+            var status = parameters.Status?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrEmpty(status) && status != Unpaid && status != Partial && status != "overdue")
+                throw new ValidationException("Status must be unpaid, partial or overdue.");
         }
 
         public async Task<ApDetailDto?> GetApById(long id)

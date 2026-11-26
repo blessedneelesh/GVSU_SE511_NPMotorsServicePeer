@@ -52,36 +52,29 @@ namespace NPMotors.Repository.Repositories
                 tx);
         }
 
-        private const string AgingFrom =
-            @"FROM ap_bill ap
-              JOIN vendor v ON v.id = ap.vendor_id";
+        private const string OpenBills = "ap.balance > 0 AND LOWER(ap.status) IN ('unpaid', 'partial')";
 
-        // No status = every AP row, paid included. Overdue = open and past due date; Unpaid/Partial = stored status
-        // and not past due; Paid = fully settled bill (balance <= 0).
-        public async Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters)
+        // Open bills only (status unpaid/partial and balance > 0). "overdue" = past due date as of @AsOfDate;
+        // "unpaid"/"partial" = stored status and not past due. Days_Overdue and Status are set by the service.
+        public async Task<PagedList<ApBillResponseDto>> GetAllApBills(ApBillParameters parameters)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
 
             var asOfDate = (parameters.AsOfDate ?? DateTime.Today).Date;
             var status = parameters.Status?.Trim().ToLowerInvariant();
-            var whereClauses = new List<string>();
+            var whereClauses = new List<string> { OpenBills };
             var queryParams = new DynamicParameters();
             queryParams.Add("AsOfDate", asOfDate, DbType.Date);
 
             if (parameters.VendorId is not null)
             {
-                whereClauses.Add("v.id = @VendorId");
+                whereClauses.Add("ap.vendor_id = @VendorId");
                 queryParams.Add("VendorId", parameters.VendorId.Value);
             }
 
             if (status == "overdue")
             {
-                whereClauses.Add("ap.balance > 0");
                 whereClauses.Add("ap.due_date < @AsOfDate");
-            }
-            else if (status == "paid")
-            {
-                whereClauses.Add("ap.balance <= 0");
             }
             else if (status == "unpaid" || status == "partial")
             {
@@ -90,22 +83,32 @@ namespace NPMotors.Repository.Repositories
                 queryParams.Add("Status", status);
             }
 
-            var whereSql = whereClauses.Count > 0 ? " WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+            var whereSql = " WHERE " + string.Join(" AND ", whereClauses);
+            const string from = "FROM ap_bill ap JOIN vendor v ON v.id = ap.vendor_id";
 
-            var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {AgingFrom}{whereSql}", queryParams);
+            var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {from}{whereSql}", queryParams);
 
             queryParams.Add("Offset", (parameters.PageNumber - 1) * parameters.PageSize);
             queryParams.Add("Limit", parameters.PageSize);
 
-            var items = (await connection.QueryAsync<ApAgingDto>(
-                $@"SELECT ap.id AS Id, ap.number AS Number, v.id AS VendorId, v.name AS Vendor_Name,
-                          ap.due_date AS Due_Date, ap.amount AS Amount, ap.paid AS Paid,
-                          ap.balance AS Balance, ap.status AS Status
-                   {AgingFrom}{whereSql}
+            // Vendor_Balance sums all of the vendor's open bills, whatever the filters or the page.
+            var items = (await connection.QueryAsync<ApBillResponseDto>(
+                $@"SELECT ap.id AS Id, ap.number AS Number, ap.vendor_id AS Vendor_Id, v.name AS Vendor_Name,
+                          ap.date AS Date, ap.due_date AS Due_Date, ap.amount AS Amount, ap.paid AS Paid,
+                          ap.balance AS Balance, ap.status AS Status,
+                          CASE WHEN ap.due_date IS NULL OR @AsOfDate - ap.due_date <= 0 THEN 'Current'
+                               WHEN @AsOfDate - ap.due_date <= 30 THEN '1-30'
+                               WHEN @AsOfDate - ap.due_date <= 60 THEN '31-60'
+                               WHEN @AsOfDate - ap.due_date <= 90 THEN '61-90'
+                               ELSE 'Over 90' END AS Aging_Bucket,
+                          (SELECT COALESCE(SUM(o.balance), 0) FROM ap_bill o
+                           WHERE o.vendor_id = ap.vendor_id AND o.balance > 0
+                             AND LOWER(o.status) IN ('unpaid', 'partial')) AS Vendor_Balance
+                   {from}{whereSql}
                    ORDER BY ap.due_date, ap.number OFFSET @Offset LIMIT @Limit",
                 queryParams)).ToList();
 
-            return new PagedList<ApAgingDto>(items, count, parameters.PageNumber, parameters.PageSize);
+            return new PagedList<ApBillResponseDto>(items, count, parameters.PageNumber, parameters.PageSize);
         }
 
         // One AP bill with its vendor (name, contact, phone, email, address); null when not found.

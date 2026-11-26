@@ -11,7 +11,7 @@ namespace NPMotors.Repository.Interface
         Task<APBill?> GetApBillById(long id, IDbTransaction? tx);
         Task<int> UpdateApBillPayment(APBill bill, IDbTransaction tx);
         Task<decimal> GetOpenBalanceByVendor(long vendorId, IDbTransaction tx);
-        Task<PagedList<ApAgingDto>> GetAllAp(ApAgingParameters parameters);
+        Task<PagedList<ApBillResponseDto>> GetAllApBills(ApBillParameters parameters);
         Task<ApDetailDto?> GetApById(long id);
     }
 }

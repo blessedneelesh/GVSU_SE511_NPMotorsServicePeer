@@ -591,7 +591,7 @@ namespace Module.Tests.Controllers
             await AssertNothingSavedAsync(billId);
         }
 
-        // ---- GET /Ap/GetAllAp. As-of date: 2026-11-08. ----
+        // ---- GET /APBill/GetAllApBills. As-of date: 2026-11-08. ----
         // P1 due 2026-10-01 unpaid 1000 (38 days overdue), P2 due 2026-10-15 partial 1000/400 (24 days),
         // P3 due 2026-12-01 unpaid 1000 (0 days, not overdue), P4 fully paid, due 2026-09-01.
 
@@ -605,9 +605,9 @@ namespace Module.Tests.Controllers
             await CreateBillAsync(1000m, 1000m, "paid", new DateTime(2026, 9, 1));
         }
 
-        private async Task<(HttpResponseMessage Response, JObject Json)> GetAllApAsync(string query)
+        private async Task<(HttpResponseMessage Response, JObject Json)> GetAllApBillsAsync(string query)
         {
-            var response = await _testClient.GetAsync($"Ap/GetAllAp?{query}");
+            var response = await _testClient.GetAsync($"APBill/GetAllApBills?{query}");
             var text = await response.Content.ReadAsStringAsync();
             return (response, response.IsSuccessStatusCode ? JObject.Parse(text) : new JObject());
         }
@@ -621,72 +621,74 @@ namespace Module.Tests.Controllers
             Items(json).Single(i => Prop(i, "number").ToString() == $"AP-{_marker}-{n}");
 
         [Fact]
-        public async Task GetAllAp_Returns200WithItemsAndMetaData()
+        public async Task GetAllApBills_Returns200WithItemsAndMetaData()
         {
             await SeedAgingBillsAsync();
 
-            var (response, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
+            var (response, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(4, Items(json).Count);
+            Assert.Equal(3, Items(json).Count);
             var meta = Prop(json, "metaData");
             foreach (var name in new[] { "currentPage", "totalPages", "pageSize", "totalCount" })
                 Assert.NotNull(((JObject)meta).GetValue(name, StringComparison.OrdinalIgnoreCase));
-            Assert.Equal(4, (int)Prop(meta, "totalCount"));
+            Assert.Equal(3, (int)Prop(meta, "totalCount"));
         }
 
         [Fact]
-        public async Task GetAllAp_EachItemShowsTheDocumentedColumns()
+        public async Task GetAllApBills_EachItemShowsTheDocumentedColumns()
         {
             await SeedAgingBillsAsync();
 
-            var (_, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
+            var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
             foreach (var item in Items(json))
-                foreach (var name in new[] { "id", "number", "vendorId", "vendor_Name", "due_Date", "amount", "paid",
-                                             "balance", "status", "days_Overdue", "aging_Status" })
+                foreach (var name in new[] { "id", "number", "vendor_Id", "vendor_Name", "date", "due_Date", "amount", "paid",
+                                             "balance", "status", "days_Overdue", "aging_Bucket", "vendor_Balance" })
                     Assert.NotNull(((JObject)item).GetValue(name, StringComparison.OrdinalIgnoreCase));
         }
 
         [Fact]
-        public async Task GetAllAp_ReturnsTheStoredValuesAndCalculatedFields()
+        public async Task GetAllApBills_ReturnsTheStoredValuesAndCalculatedFields()
         {
             await SeedAgingBillsAsync();
 
-            var (_, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
+            var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
             var row = Row(json, 2);
             Assert.Equal($"{_marker} Vendor", Prop(row, "vendor_Name").ToString());
-            Assert.Equal(_vendorId, (long)Prop(row, "vendorId"));
+            Assert.Equal(_vendorId, (long)Prop(row, "vendor_Id"));
             Assert.Equal(1000m, (decimal)Prop(row, "amount"));
             Assert.Equal(400m, (decimal)Prop(row, "paid"));
             Assert.Equal(600m, (decimal)Prop(row, "balance"));
-            Assert.Equal("partial", Prop(row, "status").ToString());
             Assert.Equal(new DateTime(2026, 10, 15), (DateTime)Prop(row, "due_Date"));
             Assert.Equal(24, (int)Prop(row, "days_Overdue"));
-            Assert.Equal("Overdue", Prop(row, "aging_Status").ToString());
+            Assert.Equal("Overdue", Prop(row, "status").ToString());
+            Assert.Equal("1-30", Prop(row, "aging_Bucket").ToString());
+            // P1 + P2 + P3 open balances: 1000 + 600 + 1000.
+            Assert.Equal(2600m, (decimal)Prop(row, "vendor_Balance"));
         }
 
         [Fact]
-        public async Task GetAllAp_NotYetDue_DaysOverdueZeroAndKeepsStoredStatus()
+        public async Task GetAllApBills_NotYetDue_DaysOverdueZeroAndKeepsStoredStatus()
         {
             await SeedAgingBillsAsync();
 
-            var (_, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
+            var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
             var row = Row(json, 3);
             Assert.Equal(0, (int)Prop(row, "days_Overdue"));
-            Assert.Equal("unpaid", Prop(row, "aging_Status").ToString());
+            Assert.Equal("unpaid", Prop(row, "status").ToString());
         }
 
         [Fact]
-        public async Task GetAllAp_NoStatus_ListsEveryBillIncludingPaid()
+        public async Task GetAllApBills_NoStatus_ListsOpenBillsAndNeverPaidOnes()
         {
             await SeedAgingBillsAsync();
 
-            var (_, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
+            var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
-            Assert.Equal(new[] { 1, 2, 3, 4 }.Select(n => $"AP-{_marker}-{n}").OrderBy(x => x),
+            Assert.Equal(new[] { 1, 2, 3 }.Select(n => $"AP-{_marker}-{n}").OrderBy(x => x),
                 Items(json).Select(i => Prop(i, "number").ToString()).OrderBy(x => x));
         }
 
@@ -694,24 +696,36 @@ namespace Module.Tests.Controllers
         [InlineData("Overdue", new[] { 1, 2 })]
         [InlineData("Unpaid", new[] { 3 })]
         [InlineData("Partial", new int[0])]
-        [InlineData("Paid", new[] { 4 })]
         [InlineData("overdue", new[] { 1, 2 })]
-        public async Task GetAllAp_StatusFilter_ReturnsMatchingBills(string status, int[] expected)
+        public async Task GetAllApBills_StatusFilter_ReturnsMatchingBills(string status, int[] expected)
         {
             await SeedAgingBillsAsync();
 
-            var (_, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}&Status={status}");
+            var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}&Status={status}");
 
             Assert.Equal(expected.Select(n => $"AP-{_marker}-{n}").OrderBy(x => x),
                 Items(json).Select(i => Prop(i, "number").ToString()).OrderBy(x => x));
         }
 
+        [Theory]
+        [InlineData("Status=paid")]
+        [InlineData("Status=whatever")]
+        [InlineData("PageNumber=0")]
+        [InlineData("PageSize=0")]
+        [InlineData("VendorId=0")]
+        public async Task GetAllApBills_InvalidParameters_Returns400(string query)
+        {
+            var (response, _) = await GetAllApBillsAsync(query);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
         [Fact]
-        public async Task GetAllAp_VendorWithNoBills_ReturnsEmptyPage()
+        public async Task GetAllApBills_VendorWithNoBills_ReturnsEmptyPage()
         {
             await SeedAgingBillsAsync();
 
-            var (response, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={long.MaxValue}");
+            var (response, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={long.MaxValue}");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Empty(Items(json));
@@ -719,25 +733,25 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetAllAp_Paging_ReturnsRequestedPageOrderedByDueDate()
+        public async Task GetAllApBills_Paging_ReturnsRequestedPageOrderedByDueDate()
         {
             await SeedAgingBillsAsync();
 
-            var (_, json) = await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}&PageNumber=2&PageSize=2");
+            var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}&PageNumber=2&PageSize=2");
 
             var numbers = Items(json).Select(i => Prop(i, "number").ToString()).ToList();
-            // Ordered by due date: P4 (09-01), P1 (10-01) | P2 (10-15), P3 (12-01).
-            Assert.Equal(new[] { $"AP-{_marker}-2", $"AP-{_marker}-3" }, numbers);
+            // Ordered by due date: P1 (10-01), P2 (10-15) | P3 (12-01).
+            Assert.Equal(new[] { $"AP-{_marker}-3" }, numbers);
             var meta = Prop(json, "metaData");
             Assert.Equal(2, (int)Prop(meta, "currentPage"));
             Assert.Equal(2, (int)Prop(meta, "totalPages"));
-            Assert.Equal(4, (int)Prop(meta, "totalCount"));
+            Assert.Equal(3, (int)Prop(meta, "totalCount"));
         }
 
         [Fact]
-        public async Task GetAllAp_PageSizeAbove100_IsCappedAt100()
+        public async Task GetAllApBills_PageSizeAbove100_IsCappedAt100()
         {
-            var (_, json) = await GetAllApAsync("PageSize=500");
+            var (_, json) = await GetAllApBillsAsync("PageSize=500");
 
             Assert.Equal(100, (int)Prop(Prop(json, "metaData"), "pageSize"));
         }
@@ -850,11 +864,11 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetAllAp_ChangesNothing()
+        public async Task GetAllApBills_ChangesNothing()
         {
             await SeedAgingBillsAsync();
 
-            await GetAllApAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
+            await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
             using var connection = _repositoryContext.GetDatabaseConnection();
             var paid = await connection.ExecuteScalarAsync<decimal>(

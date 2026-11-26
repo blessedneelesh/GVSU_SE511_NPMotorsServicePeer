@@ -17,11 +17,18 @@ namespace NPMotors.Peer.Controllers
             _apBillService = apBillService;
         }
 
-        [HttpGet("/Ap/GetAllAp")]
-        public async Task<IActionResult> GetAllAp([FromQuery] ApAgingParameters parameters)
+        [HttpGet]
+        public async Task<IActionResult> GetAllApBills([FromQuery] ApBillParameters parameters)
         {
-            var items = await _apBillService.GetAllAp(parameters);
-            return Ok(new { items, metaData = items.MetaData });
+            try
+            {
+                var items = await _apBillService.GetAllApBills(parameters);
+                return Ok(new { items, metaData = items.MetaData });
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
         }
 
         [HttpGet("/Ap/GetApById")]
