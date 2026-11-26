@@ -742,6 +742,113 @@ namespace Module.Tests.Controllers
             Assert.Equal(100, (int)Prop(Prop(json, "metaData"), "pageSize"));
         }
 
+        // ---- GET /Ap/GetApById?id= ----
+
+        private async Task<(HttpResponseMessage Response, JObject Json)> GetApByIdAsync(string id)
+        {
+            var response = await _testClient.GetAsync($"Ap/GetApById?id={id}");
+            var text = await response.Content.ReadAsStringAsync();
+            return (response, response.IsSuccessStatusCode ? JObject.Parse(text) : new JObject());
+        }
+
+        [Fact]
+        public async Task GetApById_Existing_Returns200WithTheBill()
+        {
+            var billId = await CreateBillAsync(1000m, 400m, "partial", new DateTime(2026, 10, 15));
+
+            var (response, json) = await GetApByIdAsync(billId.ToString());
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(billId, (long)Prop(json, "id"));
+            Assert.Equal($"AP-{_marker}-1", Prop(json, "number").ToString());
+            Assert.Equal(_vendorId, (long)Prop(json, "vendorId"));
+            Assert.Equal($"{_marker} Vendor", Prop(json, "vendor").ToString());
+            Assert.Equal(new DateTime(2026, 10, 1), (DateTime)Prop(json, "date"));
+            Assert.Equal(new DateTime(2026, 10, 15), (DateTime)Prop(json, "dueDate"));
+            Assert.Equal(1000m, (decimal)Prop(json, "amount"));
+            Assert.Equal(400m, (decimal)Prop(json, "paid"));
+            Assert.Equal(600m, (decimal)Prop(json, "balance"));
+            Assert.Equal("partial", Prop(json, "status").ToString());
+        }
+
+        [Fact]
+        public async Task GetApById_ShowsTheDocumentedFields()
+        {
+            var billId = await CreateBillAsync();
+
+            var (_, json) = await GetApByIdAsync(billId.ToString());
+
+            foreach (var name in new[] { "id", "number", "vendorId", "vendor", "vehicleId", "date", "dueDate", "amount",
+                                         "paid", "balance", "days", "status", "contact", "phone", "email", "address" })
+                Assert.NotNull(json.GetValue(name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public async Task GetApById_ShowsTheVendorContactDetails()
+        {
+            var billId = await CreateBillAsync();
+            using (var connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync(
+                    "UPDATE vendor SET contact = 'Jo Vendor', phone = '555-0100', email = 'jo@example.com', address = '1 Main St' WHERE id = @Id",
+                    new { Id = _vendorId });
+
+            var (_, json) = await GetApByIdAsync(billId.ToString());
+
+            Assert.Equal("Jo Vendor", Prop(json, "contact").ToString());
+            Assert.Equal("555-0100", Prop(json, "phone").ToString());
+            Assert.Equal("jo@example.com", Prop(json, "email").ToString());
+            Assert.Equal("1 Main St", Prop(json, "address").ToString());
+        }
+
+        [Fact]
+        public async Task GetApById_PastDue_DaysIsCountedUpToToday()
+        {
+            var due = new DateTime(2020, 1, 1);
+            var billId = await CreateBillAsync(due: due);
+
+            var (_, json) = await GetApByIdAsync(billId.ToString());
+
+            Assert.Equal((DateTime.Today - due).Days, (int)Prop(json, "days"));
+        }
+
+        [Fact]
+        public async Task GetApById_NotYetDue_DaysIsZero()
+        {
+            var billId = await CreateBillAsync(due: DateTime.Today.AddDays(30));
+
+            var (_, json) = await GetApByIdAsync(billId.ToString());
+
+            Assert.Equal(0, (int)Prop(json, "days"));
+        }
+
+        [Fact]
+        public async Task GetApById_UnknownId_Returns404()
+        {
+            var (response, _) = await GetApByIdAsync(long.MaxValue.ToString());
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task GetApById_NonNumericId_Returns400()
+        {
+            var (response, _) = await GetApByIdAsync("abc");
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task GetApById_ChangesNothing()
+        {
+            var billId = await CreateBillAsync(1000m, 400m, "partial");
+
+            await GetApByIdAsync(billId.ToString());
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            Assert.Equal(400m, await connection.ExecuteScalarAsync<decimal>(
+                "SELECT paid FROM ap_bill WHERE id = @Id", new { Id = billId }));
+        }
+
         [Fact]
         public async Task GetAllAp_ChangesNothing()
         {

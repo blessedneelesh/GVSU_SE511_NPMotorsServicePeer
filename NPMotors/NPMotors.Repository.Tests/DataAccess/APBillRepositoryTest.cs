@@ -537,6 +537,82 @@ namespace NPMotors.Repository.Tests.DataAccess
             Assert.Equal(2, second.MetaData.CurrentPage);
         }
 
+        // ---- GetApById ----
+
+        [Fact]
+        public async Task GetApById_Existing_ReturnsBillColumnsAndVendorName()
+        {
+            var ap = await _repository.GetApById(_openBillId);
+
+            Assert.NotNull(ap);
+            Assert.Equal(_openBillId, ap!.Id);
+            Assert.StartsWith($"AP-{_marker}-", ap.Number);
+            Assert.Equal(_vendorId, ap.VendorId);
+            Assert.Equal($"{_marker} Vendor", ap.Vendor);
+            Assert.Equal(_vehicleId, ap.VehicleId);
+            Assert.Equal(new DateTime(2026, 10, 1), ap.Date);
+            Assert.Equal(new DateTime(2026, 12, 1), ap.DueDate);
+            Assert.Equal(4000m, ap.Amount);
+            Assert.Equal(1500m, ap.Paid);
+            Assert.Equal(2500m, ap.Balance);
+            Assert.Equal("partial", ap.Status);
+        }
+
+        [Fact]
+        public async Task GetApById_ReturnsTheVendorContactDetails()
+        {
+            using (IDbConnection connection = _repositoryContext.GetDatabaseConnection())
+                await connection.ExecuteAsync(
+                    "UPDATE vendor SET contact = 'Jo Vendor', phone = '555-0100', email = 'jo@example.com', address = '1 Main St' WHERE id = @Id",
+                    new { Id = _vendorId });
+
+            var ap = await _repository.GetApById(_openBillId);
+
+            Assert.Equal("Jo Vendor", ap!.Contact);
+            Assert.Equal("555-0100", ap.Phone);
+            Assert.Equal("jo@example.com", ap.Email);
+            Assert.Equal("1 Main St", ap.Address);
+        }
+
+        [Fact]
+        public async Task GetApById_VendorWithoutContactDetails_ReturnsNulls()
+        {
+            var ap = await _repository.GetApById(_otherVendorBillId);
+
+            Assert.Null(ap!.Contact);
+            Assert.Null(ap.Phone);
+            Assert.Null(ap.Email);
+            Assert.Null(ap.Address);
+        }
+
+        [Fact]
+        public async Task GetApById_BillWithoutVehicle_VehicleIdIsNull()
+        {
+            Assert.Null((await _repository.GetApById(_paidBillId))!.VehicleId);
+        }
+
+        [Fact]
+        public async Task GetApById_ReturnsOnlyTheRequestedBill()
+        {
+            var ap = await _repository.GetApById(_otherVendorBillId);
+
+            Assert.Equal(_otherVendorBillId, ap!.Id);
+            Assert.Equal(_otherVendorId, ap.VendorId);
+            Assert.Equal(700m, ap.Amount);
+        }
+
+        [Fact]
+        public async Task GetApById_LeavesDaysToTheService()
+        {
+            Assert.Equal(0, (await _repository.GetApById(_openBillId))!.Days);
+        }
+
+        [Fact]
+        public async Task GetApById_UnknownId_ReturnsNull()
+        {
+            Assert.Null(await _repository.GetApById(long.MaxValue));
+        }
+
         [Fact]
         public async Task GetAllAp_PageBeyondTheEnd_ReturnsEmptyWithTotalCount()
         {

@@ -1007,6 +1007,97 @@ namespace Module.Tests.Services
             Assert.Empty(result);
         }
 
+        // ---- GetApById: CalculateDaysOverdue as of today ----
+
+        private static ApDetailDto Detail(DateTime? due, string status = "unpaid") => new()
+        {
+            Id = 7, Number = "AP-2026-000007", VendorId = 3, Vendor = "Acme Motors", VehicleId = 9,
+            Date = new DateTime(2026, 10, 1), DueDate = due, Amount = 1000m, Paid = 0m, Balance = 1000m, Status = status
+        };
+
+        [Fact]
+        public async Task GetApById_DueTenDaysAgo_DaysIs10()
+        {
+            _bills.Detail = Detail(DateTime.Today.AddDays(-10));
+
+            var result = await _service.GetApById(7);
+
+            Assert.Equal(10, result!.Days);
+        }
+
+        [Fact]
+        public async Task GetApById_DueToday_DaysIsZero()
+        {
+            _bills.Detail = Detail(DateTime.Today);
+
+            Assert.Equal(0, (await _service.GetApById(7))!.Days);
+        }
+
+        [Fact]
+        public async Task GetApById_DueInTheFuture_DaysNeverBelowZero()
+        {
+            _bills.Detail = Detail(DateTime.Today.AddDays(30));
+
+            Assert.Equal(0, (await _service.GetApById(7))!.Days);
+        }
+
+        [Fact]
+        public async Task GetApById_NoDueDate_DaysIsZero()
+        {
+            _bills.Detail = Detail(null);
+
+            Assert.Equal(0, (await _service.GetApById(7))!.Days);
+        }
+
+        [Fact]
+        public async Task GetApById_DueDateWithTimeOfDay_CountsWholeDays()
+        {
+            _bills.Detail = Detail(DateTime.Today.AddDays(-1).AddHours(23));
+
+            Assert.Equal(1, (await _service.GetApById(7))!.Days);
+        }
+
+        [Fact]
+        public async Task GetApById_ReturnsTheRepositoryObjectWithStoredFieldsUntouched()
+        {
+            var detail = Detail(DateTime.Today.AddDays(-5), "partial");
+            _bills.Detail = detail;
+
+            var result = await _service.GetApById(7);
+
+            Assert.Same(detail, result);
+            Assert.Equal("partial", result!.Status);
+            Assert.Equal(1000m, result.Balance);
+        }
+
+        [Fact]
+        public async Task GetApById_PassesTheIdToTheRepository()
+        {
+            _bills.Detail = Detail(null);
+
+            await _service.GetApById(42);
+
+            Assert.Equal(42, Assert.Single(_bills.DetailCalls));
+        }
+
+        [Fact]
+        public async Task GetApById_NotFound_ReturnsNull()
+        {
+            _bills.Detail = null;
+
+            Assert.Null(await _service.GetApById(999));
+        }
+
+        [Fact]
+        public async Task GetApById_OnlyReadsTheBill()
+        {
+            _bills.Detail = Detail(null);
+
+            await _service.GetApById(7);
+
+            Assert.Equal(new[] { "get-ap-detail" }, _log);
+        }
+
         [Fact]
         public async Task GetAllAp_OnlyReadsTheBills()
         {
