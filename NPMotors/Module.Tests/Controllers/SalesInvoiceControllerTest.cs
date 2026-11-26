@@ -13,7 +13,7 @@ namespace Module.Tests.Controllers
     public class SalesInvoiceControllerTest : TestBase, IAsyncLifetime
     {
         private VendorRepository _vendorRepo => new(_repositoryContext);
-        private VehicleRepository _vehicleRepo => new(_repositoryContext);
+        private VehicleRepository _vehicleRepo => new(_repositoryContext, null!);
         private CustomerRepository _customerRepo => new(_repositoryContext);
         private EmployeeRepository _employeeRepo => new(_repositoryContext);
         private readonly string _marker = $"itest-{Guid.NewGuid():N}".Substring(0, 12);
@@ -1270,6 +1270,273 @@ namespace Module.Tests.Controllers
             var response = await _testClient.SendAsync(new HttpRequestMessage(new HttpMethod(method), url));
 
             Assert.Contains(response.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
+        }
+
+        // ---- GetSalesInvoiceByCustomer (Story 14) ----
+        // Customer Alpha (A) invoices (all 2020 Honda Civic, selling price 18000, created in this order):
+        //   X1  posted     2026-03-01  tax 500 -> total 18500  paid 0      unpaid
+        //   X2  posted     2026-05-01  total 18000             paid 4000   partial
+        //   X3  cancelled  2026-04-01  total 18000             paid 0      unpaid
+        //   X4  draft      2026-06-01  total 18000             paid 0      (no payment status)   -> never listed
+        //   X5  posted     2026-05-01  total 18000             paid 18000  paid  (same date as X2, higher number)
+        // Customer Beta (B): no invoices.  Customer Gamma (G): G1 posted 2026-02-01, 2019 Toyota Corolla, total 20000.
+        // Expected order for Alpha: X2, X5, X3, X1.
+        private int _byCustomerVehicleCount;
+        private long _byCustomerVendorId;
+
+        private sealed record ByCustomerSeed(long AlphaId, long BetaId, long GammaId, Dictionary<string, string> Numbers)
+        {
+            public string Number(string key) => Numbers[key];
+
+            public string[] Keys(IEnumerable<SalesInvoiceByCustomerDto> items) =>
+                items.Select(i => Numbers.First(n => n.Value == i.Invoice_Number).Key).ToArray();
+        }
+
+        private async Task<ByCustomerSeed> SeedByCustomerAsync()
+        {
+            var alphaId = await CreateCustomerAsync();
+            var betaId = await CreateCustomerAsync();
+            var gammaId = await CreateCustomerAsync();
+            var salespersonId = await CreateSalespersonAsync();
+            var numbers = new Dictionary<string, string>();
+
+            await AddByCustomerInvoiceAsync(numbers, "X1", alphaId, salespersonId, new DateTime(2026, 3, 1), "posted", "unpaid", 0m, tax: 500m);
+            await AddByCustomerInvoiceAsync(numbers, "X2", alphaId, salespersonId, new DateTime(2026, 5, 1), "posted", "partial", 4000m);
+            await AddByCustomerInvoiceAsync(numbers, "X3", alphaId, salespersonId, new DateTime(2026, 4, 1), "cancelled", "unpaid", 0m);
+            await AddByCustomerInvoiceAsync(numbers, "X4", alphaId, salespersonId, new DateTime(2026, 6, 1), "draft", null, 0m);
+            await AddByCustomerInvoiceAsync(numbers, "X5", alphaId, salespersonId, new DateTime(2026, 5, 1), "posted", "paid", 18000m);
+            await AddByCustomerInvoiceAsync(numbers, "G1", gammaId, salespersonId, new DateTime(2026, 2, 1), "posted", "unpaid", 0m,
+                year: 2019, make: "Toyota", model: "Corolla", sellingPrice: 20000m);
+            return new ByCustomerSeed(alphaId, betaId, gammaId, numbers);
+        }
+
+        // A draft invoice is created through the repository (for the FKs and the stored total), then its
+        // lifecycle, payment status and paid amount are set straight in the table.
+        private async Task AddByCustomerInvoiceAsync(Dictionary<string, string> numbers, string key, long customerId,
+            long salespersonId, DateTime date, string lifecycle, string? paymentStatus, decimal paid, decimal tax = 0m,
+            int year = 2020, string make = "Honda", string model = "Civic", decimal sellingPrice = 18000m)
+        {
+            if (_byCustomerVendorId == 0)
+            {
+                var vendor = await new VendorRepository(_repositoryContext).AddVendor(new VendorCreateDto
+                {
+                    Name = $"{_marker} Vendor", Type = VendorType.Vehicles, Status = Status.Active
+                });
+                _byCustomerVendorId = vendor.Id;
+            }
+            var vehicle = await new VehicleRepository(_repositoryContext, null!).AddVehicle(new VehicleCreateDto
+            {
+                Vendor_Id = _byCustomerVendorId,
+                Vin = $"{_marker}B{++_byCustomerVehicleCount}".ToUpperInvariant().PadRight(17, '0').Substring(0, 17),
+                Make = make, Model = model, Year = year,
+                Purchase_Price = 15000m, Additional_Costs = 250m, Selling_Price = sellingPrice
+            });
+            var invoice = await new SalesInvoiceRepository(_repositoryContext).AddSalesInvoice(new SalesInvoiceCreateDto
+            {
+                Customer_Id = customerId, Salesperson_Id = salespersonId, Vehicle_Id = vehicle.Id,
+                Invoice_Date = date, Tax = tax
+            });
+            numbers[key] = invoice.Number;
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            await connection.ExecuteAsync(
+                @"UPDATE sales_invoice
+                  SET lifecycle = @Lifecycle, payment_status = @PaymentStatus, paid = @Paid, cancel_reason = @CancelReason
+                  WHERE id = @Id",
+                new
+                {
+                    invoice.Id, Lifecycle = lifecycle, PaymentStatus = paymentStatus, Paid = paid,
+                    CancelReason = lifecycle == "cancelled" ? "test" : null
+                });
+        }
+
+        private async Task<(HttpResponseMessage Response, JObject Json)> GetByCustomerAsync(string query)
+        {
+            var response = await _testClient.GetAsync($"SalesInvoice/GetSalesInvoiceByCustomer?{query}");
+            var text = await response.Content.ReadAsStringAsync();
+            return (response, response.IsSuccessStatusCode ? JObject.Parse(text) : new JObject());
+        }
+
+        private static JToken Prop(JToken token, string name) =>
+            ((JObject)token).GetValue(name, StringComparison.OrdinalIgnoreCase)!;
+
+        private static JArray Items(JObject json) => (JArray)Prop(json, "items");
+
+        private static string[] Numbers(JObject json) =>
+            Items(json).Select(i => Prop(i, "invoice_Number").ToString()).ToArray();
+
+        // ---- 200, response shape ----
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_Returns200WithItems()
+        {
+            var s = await SeedByCustomerAsync();
+            var (response, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(4, Items(json).Count);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_IsNotPaged_NoMetaData()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            Assert.Null(json.GetValue("metaData", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_PagingParametersAreIgnored()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}&PageNumber=2&PageSize=1");
+
+            Assert.Equal(4, Items(json).Count);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_EachItemShowsTheDocumentedColumns()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            var names = ((JObject)Items(json)[0]).Properties().Select(p => p.Name.ToLowerInvariant()).OrderBy(n => n).ToArray();
+            Assert.Equal(new[] { "amount", "invoice_date", "invoice_number", "paid", "payment_status", "salesperson", "vehicle" }, names);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_ReturnsTheStoredValues()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            var row = Items(json).Single(i => Prop(i, "invoice_Number").ToString() == s.Number("X2"));
+            Assert.Equal(new DateTime(2026, 5, 1), ((DateTime)Prop(row, "invoice_Date")).Date);
+            Assert.Equal("2020 Honda Civic", Prop(row, "vehicle").ToString());
+            Assert.Equal($"{_marker} Seller", Prop(row, "salesperson").ToString());
+            Assert.Equal(18000m, (decimal)Prop(row, "amount"));
+            Assert.Equal(4000m, (decimal)Prop(row, "paid"));
+            Assert.Equal("partial", Prop(row, "payment_Status").ToString());
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_AmountIncludesTax()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            var row = Items(json).Single(i => Prop(i, "invoice_Number").ToString() == s.Number("X1"));
+            Assert.Equal(18500m, (decimal)Prop(row, "amount"));
+        }
+
+        // ---- Lifecycle, customer, order ----
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_DraftIsNotListed()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            Assert.DoesNotContain(s.Number("X4"), Numbers(json));
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_CancelledIsListed()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            Assert.Contains(s.Number("X3"), Numbers(json));
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_OnlyThatCustomersInvoices()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.GammaId}");
+
+            Assert.Equal(new[] { s.Number("G1") }, Numbers(json));
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_NewestFirstThenNumber()
+        {
+            var s = await SeedByCustomerAsync();
+            var (_, json) = await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            Assert.Equal(new[] { s.Number("X2"), s.Number("X5"), s.Number("X3"), s.Number("X1") }, Numbers(json));
+        }
+
+        // ---- Empty results are 200, not 404 ----
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_CustomerWithoutInvoices_Returns200WithEmptyItems()
+        {
+            var s = await SeedByCustomerAsync();
+            var (response, json) = await GetByCustomerAsync($"customerId={s.BetaId}");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Empty(Items(json));
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_UnknownCustomer_Returns200WithEmptyItems()
+        {
+            var (response, json) = await GetByCustomerAsync($"customerId={long.MaxValue}");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Empty(Items(json));
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_NoCustomerId_Returns200WithEmptyItems()
+        {
+            var (response, json) = await GetByCustomerAsync(string.Empty);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Empty(Items(json));
+        }
+
+        // ---- 400 from [ApiController] model binding ----
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_NonNumericCustomerId_Returns400()
+        {
+            var (response, _) = await GetByCustomerAsync("customerId=abc");
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        // ---- Read-only ----
+
+        [Theory]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("DELETE")]
+        public async Task GetSalesInvoiceByCustomer_WriteVerbs_Return405(string verb)
+        {
+            var request = new HttpRequestMessage(new HttpMethod(verb), "SalesInvoice/GetSalesInvoiceByCustomer")
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
+
+            var response = await _testClient.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task GetSalesInvoiceByCustomer_ChangesNothing()
+        {
+            var s = await SeedByCustomerAsync();
+            await GetByCustomerAsync($"customerId={s.AlphaId}");
+
+            using var connection = _repositoryContext.GetDatabaseConnection();
+            var rows = (await connection.QueryAsync<string>(
+                @"SELECT lifecycle || ':' || paid::text FROM sales_invoice
+                  WHERE customer_id = @CustomerId ORDER BY number", new { CustomerId = s.AlphaId })).ToArray();
+            Assert.Equal(new[] { "posted:0.00", "posted:4000.00", "cancelled:0.00", "draft:0.00", "posted:18000.00" }, rows);
         }
     }
 }

@@ -25,6 +25,7 @@ namespace Module.Tests.Services
                 return Task.FromResult(Page);
             }
 
+            public Task<List<SalesInvoiceByCustomerDto>> GetSalesInvoiceByCustomer(long customerId) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id)
             {
                 return Task.FromResult(ByIdResult);
@@ -163,6 +164,7 @@ namespace Module.Tests.Services
             public Task<long> InsertArInvoice(NPMotors.Repository.Models.ArInvoice arInvoice, System.Data.IDbTransaction tx) => throw new NotSupportedException();
             public Task<NPMotors.Repository.Models.ArInvoice?> GetArInvoiceById(long id) => throw new NotSupportedException();
             public Task<int> UpdateArPayment(NPMotors.Repository.Models.ArInvoice ar, decimal expectedBalance, System.Data.IDbTransaction tx) => throw new NotSupportedException();
+            public Task<NPMotors.Repository.Models.Dto.ArDetailDto?> GetArById(long id) => throw new NotSupportedException();
             public Task<NPMotors.Repository.RequestFeatures.PagedList<NPMotors.Repository.Models.Dto.ArAgingDto>> GetAllAr(NPMotors.Repository.RequestFeatures.ArAgingParameters parameters) => throw new NotSupportedException();
         }
 

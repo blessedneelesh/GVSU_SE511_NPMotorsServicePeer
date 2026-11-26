@@ -67,7 +67,7 @@ namespace Module.Tests.Controllers
         private async Task AddArAsync(string key, long customerId, long salespersonId, long vendorId,
             DateTime due, decimal amount, decimal paid, string status)
         {
-            var vehicle = await new VehicleRepository(_repositoryContext).AddVehicle(new VehicleCreateDto
+            var vehicle = await new VehicleRepository(_repositoryContext, null!).AddVehicle(new VehicleCreateDto
             {
                 Vendor_Id = vendorId,
                 Vin = $"{_marker}{++_vehicleCount}".ToUpperInvariant().PadRight(17, '0').Substring(0, 17),

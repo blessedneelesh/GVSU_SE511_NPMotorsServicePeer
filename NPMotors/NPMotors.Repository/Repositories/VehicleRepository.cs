@@ -9,16 +9,25 @@ using System.Threading.Tasks;
 using Dapper;
 using System.Linq;
 using NPMotors.Repository.RequestFeatures;
+using NPMotors.Repository.Models;
+using NPMotors.Services.Abstractions.ServiceInterfaces;
+using Npgsql;
 
 namespace NPMotors.Repository.Repositories
 {
     public class VehicleRepository : IVehicleRepository
     {
         private readonly IRepositoryContext _repositoryContext;
+        private readonly ITransactionPostingService _transactionPostingService;
 
-        public VehicleRepository(IRepositoryContext repositoryContext)
+        // No user context exists yet, so new records are attributed to the system.
+        private const string CreatedBy = "system";
+        private const string PaymentStatus = "Posted";
+
+        public VehicleRepository(IRepositoryContext repositoryContext, ITransactionPostingService transactionPostingService)
         {
             _repositoryContext = repositoryContext;
+            _transactionPostingService = transactionPostingService;
         }
 
         private const string VehicleColumns =
@@ -61,6 +70,162 @@ namespace NPMotors.Repository.Repositories
                            @PurchasePrice, @AdditionalCosts, @PurchasePrice + @AdditionalCosts, @SellingPrice, @Status, @CreatedBy)
                    RETURNING {VehicleColumns}",
                 queryParams);
+        }
+
+        // One database transaction: the vehicle, the Out transaction (posted by Stories 8-9, which lowers the
+        // book balance and writes the statement line), the AP Bill (Partial / Credit) and the bank payment
+        // save together, or none do. total_cost is purchase_price + additional_costs and never changes afterwards.
+        public async Task<VehiclePurchaseResponseDto> PurchaseVehicle(VehiclePurchaseCreateDto purchase, APBill? apBill)
+        {
+            using IDbConnection connection = _repositoryContext.GetDatabaseConnection();
+            if (connection.State != ConnectionState.Open)
+                connection.Open();
+            using IDbTransaction tx = connection.BeginTransaction();
+
+            try
+            {
+                var queryParams = new DynamicParameters();
+                queryParams.Add("VendorId", purchase.Vendor_Id);
+                queryParams.Add("Vin", purchase.Vin.Trim());
+                queryParams.Add("Make", purchase.Make?.Trim());
+                queryParams.Add("Model", purchase.Model?.Trim());
+                queryParams.Add("Year", purchase.Year);
+                queryParams.Add("Color", purchase.Color?.Trim());
+                queryParams.Add("PurchaseDate", purchase.Purchase_Date?.Date, DbType.Date);
+                queryParams.Add("Warehouse", purchase.Warehouse?.Trim());
+                queryParams.Add("PurchasePrice", purchase.Purchase_Price);
+                queryParams.Add("AdditionalCosts", purchase.Additional_Costs ?? 0m);
+                queryParams.Add("SellingPrice", purchase.Selling_Price ?? 0m);
+                queryParams.Add("Status", VehicleStatus.Available.ToDbValue());
+                queryParams.Add("CreatedBy", CreatedBy);
+
+                // 1. The vehicle, always Available.
+                VehiclePurchaseResponseDto result;
+                try
+                {
+                    result = await connection.QuerySingleAsync<VehiclePurchaseResponseDto>(
+                        $@"INSERT INTO vehicle (vendor_id, vin, make, model, year, color, purchase_date, warehouse,
+                                                purchase_price, additional_costs, total_cost, selling_price, status, created_by)
+                           VALUES (@VendorId, @Vin, @Make, @Model, @Year, @Color, @PurchaseDate, @Warehouse,
+                                   @PurchasePrice, @AdditionalCosts, @PurchasePrice + @AdditionalCosts, @SellingPrice, @Status, @CreatedBy)
+                           RETURNING {VehicleColumns}",
+                        queryParams, tx);
+                }
+                catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+                {
+                    throw new ArgumentException("A vehicle with this VIN already exists.");
+                }
+
+                var vendorName = await connection.QuerySingleAsync<string>(
+                    "SELECT name FROM vendor WHERE id = @Id", new { Id = purchase.Vendor_Id }, tx);
+                result.Vendor_Name = vendorName;
+                result.Payment_Condition = purchase.Payment_Condition;
+                result.Amount_Paid = purchase.Amount_Paid;
+
+                var paymentDate = (purchase.Purchase_Date ?? DateTime.Today).Date;
+
+                // The payment number is built from the bank_payment id, which is reserved first so the
+                // Transaction can carry it as its source number.
+                long? paymentId = null;
+                string? paymentNumber = null;
+                if (purchase.Amount_Paid > 0)
+                {
+                    paymentId = await connection.ExecuteScalarAsync<long>(
+                        "SELECT nextval(pg_get_serial_sequence('bank_payment', 'id'))", transaction: tx);
+                    paymentNumber = $"PAY-{DateTime.UtcNow.Year}-{paymentId:D6}";
+
+                    // 2. The Out transaction. It locks the bank account, checks it is active and that the amount
+                    //    does not exceed its book balance, lowers the balance and inserts the statement line.
+                    var bankAccountId = purchase.Bank_Account_Id!.Value;
+                    var transactionId = await _transactionPostingService.PostTransaction(new PostTransactionRequest
+                    {
+                        BankAccountId = bankAccountId,
+                        Direction = Direction.Out,
+                        Amount = purchase.Amount_Paid,
+                        Date = paymentDate,
+                        Type = TransactionType.BankPayment,
+                        SourceNumber = paymentNumber,
+                        Party = vendorName,
+                        Description = $"Vehicle purchase {result.Vin}",
+                        Status = TransactionStatus.Posted
+                    }, tx);
+
+                    result.Transaction_Id = transactionId;
+                    result.Book_Balance = await connection.ExecuteScalarAsync<decimal>(
+                        "SELECT book_balance FROM bank_account WHERE id = @Id", new { Id = bankAccountId }, tx);
+                }
+
+                // 3. The AP Bill, only when the service prepared one (Partial or Credit).
+                if (apBill is not null)
+                {
+                    var apParams = new DynamicParameters();
+                    apParams.Add("VendorId", purchase.Vendor_Id);
+                    apParams.Add("VehicleId", result.Id);
+                    apParams.Add("NumberPrefix", $"AP-{DateTime.UtcNow.Year}-");
+                    apParams.Add("Date", apBill.Date.Date, DbType.Date);
+                    apParams.Add("DueDate", apBill.DueDate?.Date, DbType.Date);
+                    apParams.Add("Amount", apBill.Amount);
+                    apParams.Add("Paid", apBill.Paid);
+                    apParams.Add("Balance", apBill.Balance);
+                    apParams.Add("Status", apBill.Status);
+                    apParams.Add("CreatedBy", CreatedBy);
+
+                    var ap = await connection.QuerySingleAsync<ApBillKey>(
+                        @"WITH next_id AS (SELECT nextval(pg_get_serial_sequence('ap_bill', 'id')) AS id)
+                          INSERT INTO ap_bill (id, number, vendor_id, vehicle_id, date, due_date, amount, paid, balance, status, created_by)
+                          SELECT n.id, @NumberPrefix || LPAD(n.id::text, 6, '0'), @VendorId, @VehicleId, @Date, @DueDate,
+                                 @Amount, @Paid, @Balance, @Status, @CreatedBy
+                          FROM next_id n
+                          RETURNING id, number",
+                        apParams, tx);
+                    result.Ap_Bill_Id = ap.Id;
+                    result.Ap_Bill_Number = ap.Number;
+                }
+
+                // 4. The bank payment, linked to the vehicle and to the AP Bill when one exists.
+                if (paymentId is not null)
+                {
+                    await connection.ExecuteAsync(
+                        @"INSERT INTO bank_payment (id, transaction_id, bank_account_id, vendor_id, ap_bill_id, vehicle_id, payment_number,
+                                                    payment_date, payment_method, reference, amount, description, status, created_by)
+                          VALUES (@Id, @TransactionId, @BankAccountId, @VendorId, @ApBillId, @VehicleId, @PaymentNumber,
+                                  @PaymentDate, @PaymentMethod, @Reference, @Amount, @Description, @Status, @CreatedBy)",
+                        new
+                        {
+                            Id = paymentId.Value,
+                            TransactionId = result.Transaction_Id,
+                            BankAccountId = purchase.Bank_Account_Id,
+                            VendorId = purchase.Vendor_Id,
+                            ApBillId = result.Ap_Bill_Id,
+                            VehicleId = result.Id,
+                            PaymentNumber = paymentNumber,
+                            PaymentDate = paymentDate,
+                            PaymentMethod = Enum.Parse<PaymentMethod>(purchase.Payment_Method!, true).ToString(),
+                            Reference = purchase.Reference?.Trim(),
+                            Amount = purchase.Amount_Paid,
+                            Description = $"Vehicle purchase {result.Vin}",
+                            Status = PaymentStatus,
+                            CreatedBy
+                        }, tx);
+                    result.Bank_Payment_Id = paymentId;
+                    result.Payment_Number = paymentNumber;
+                }
+
+                // 5. Everything saved together.
+                tx.Commit();
+                return result;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        private sealed class ApBillKey
+        {
+            public long Id { get; set; }
+            public string Number { get; set; } = string.Empty;
         }
 
         // Stored columns only; Total_Cost, Gross_Profit, Gross_Margin and Is_Available are filled by VehicleService.

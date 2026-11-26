@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NPMotors.Repository\NPMotors.Repository.csproj" />
+    <ProjectReference Include="..\NPMotors.Services\NPMotors.Services.csproj" />
   </ItemGroup>
 
   <ItemGroup>

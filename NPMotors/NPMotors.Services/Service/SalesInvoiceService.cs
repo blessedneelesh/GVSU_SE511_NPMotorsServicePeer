@@ -105,6 +105,11 @@ namespace NPMotors.Services.Service
             return invoice;
         }
 
+        public async Task<List<SalesInvoiceByCustomerDto>> GetSalesInvoiceByCustomer(long customerId)
+        {
+            return await _salesInvoiceRepository.GetSalesInvoiceByCustomer(customerId);
+        }
+
         public async Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason)
         {
             var text = reason?.Reason?.Trim();

@@ -169,5 +169,13 @@ namespace NPMotors.Repository.Repositories
                       OR EXISTS (SELECT 1 FROM bank_payment WHERE vendor_id = @Id)",
                 new { Id = id });
         }
+
+        public async Task<int> UpdateVendorBalance(long vendorId, decimal balance, IDbTransaction tx)
+        {
+            return await tx.Connection!.ExecuteAsync(
+                "UPDATE vendor SET balance = @Balance WHERE id = @Id",
+                new { Id = vendorId, Balance = balance },
+                tx);
+        }
     }
 }

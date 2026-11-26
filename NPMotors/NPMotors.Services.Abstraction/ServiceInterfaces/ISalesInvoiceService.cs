@@ -12,6 +12,7 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
         Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice);
         Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters);
         Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id);
+        Task<List<SalesInvoiceByCustomerDto>> GetSalesInvoiceByCustomer(long customerId);
         Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason);
         Task<SalesInvoiceResponseDto?> PostInvoice(long id, PostInvoiceRequest request);
         Task<SalesInvoiceResponseDto?> UpdateDraft(long id, SalesInvoiceCreateDto invoice);

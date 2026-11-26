@@ -80,6 +80,7 @@ namespace Module.Tests.Services
 
             public Task<int> CloseArInvoice(long invoiceId, IDbTransaction tx) { _log.Add("ar-close"); return Task.FromResult(0); }
             public Task<ArInvoice?> GetArInvoiceById(long id) { _log.Add("ar-get"); return Task.FromResult<ArInvoice?>(null); }
+            public Task<ArDetailDto?> GetArById(long id) => throw new NotSupportedException();
             public Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters) { _log.Add("ar-aging"); throw new NotSupportedException(); }
             public Task<int> UpdateArPayment(ArInvoice ar, decimal expectedBalance, IDbTransaction tx) { _log.Add("ar-update"); return Task.FromResult(0); }
             public Task<long> InsertArInvoice(ArInvoice arInvoice, IDbTransaction tx) { _log.Add("ar-insert"); return Task.FromResult(0L); }
@@ -98,6 +99,7 @@ namespace Module.Tests.Services
             public Task<SalesInvoiceResponseDto> AddSalesInvoice(SalesInvoiceCreateDto invoice) { _log.Add("invoice-add"); throw new NotSupportedException(); }
             public Task<SalesInvoiceResponseDto> PostSalesInvoice(SalesInvoiceCreateDto invoice) { _log.Add("invoice-post"); throw new NotSupportedException(); }
             public Task<PagedList<SalesInvoiceResponseDto>> GetAllSalesInvoices(SalesInvoiceParameters parameters) { _log.Add("invoice-list"); throw new NotSupportedException(); }
+            public Task<List<SalesInvoiceByCustomerDto>> GetSalesInvoiceByCustomer(long customerId) => throw new NotSupportedException();
             public Task<SalesInvoiceResponseDto?> GetSalesInvoiceById(long id) { _log.Add("invoice-get-dto"); throw new NotSupportedException(); }
             public Task<SalesInvoiceResponseDto> CancelSalesInvoice(long id, SalesInvoiceCancelDto reason, IDbTransaction tx) { _log.Add("invoice-cancel"); throw new NotSupportedException(); }
             public Task<int> UpdatePostedInvoice(SalesInvoice invoice, IDbTransaction tx) { _log.Add("invoice-update-posted"); throw new NotSupportedException(); }

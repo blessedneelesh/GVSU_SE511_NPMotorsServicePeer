@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Text;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.Models.Enums;
@@ -16,5 +17,6 @@ namespace NPMotors.Repository.Interface
         Task<VendorResponseDto?> UpdateVendor(long id, VendorUpdateDto vendor);
         Task<bool> DeleteVendor(long id);
         Task<bool> IsVendorReferenced(long id);
+        Task<int> UpdateVendorBalance(long vendorId, decimal balance, IDbTransaction tx);
     }
 }

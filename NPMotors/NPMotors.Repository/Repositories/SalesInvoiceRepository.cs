@@ -354,6 +354,29 @@ namespace NPMotors.Repository.Repositories
                 new { Id = id });
         }
 
+        // Posted and cancelled invoices of one customer (drafts are left out), newest first; empty for an unknown customer.
+        public async Task<List<SalesInvoiceByCustomerDto>> GetSalesInvoiceByCustomer(long customerId)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            return (await connection.QueryAsync<SalesInvoiceByCustomerDto>(
+                @"SELECT si.number AS Invoice_Number, si.date AS Invoice_Date,
+                         CONCAT_WS(' ', v.year, v.make, v.model) AS Vehicle,
+                         CONCAT_WS(' ', e.first_name, e.last_name) AS Salesperson,
+                         COALESCE(si.total, 0) AS Amount, si.paid AS Paid, si.payment_status AS Payment_Status
+                  FROM sales_invoice si
+                  JOIN vehicle v ON v.id = si.vehicle_id
+                  JOIN employee e ON e.id = si.salesperson_id
+                  WHERE si.customer_id = @CustomerId AND LOWER(si.lifecycle) IN (@Posted, @Cancelled)
+                  ORDER BY si.date DESC, si.number",
+                new
+                {
+                    CustomerId = customerId,
+                    Posted = InvoiceLifecycle.Posted.ToDbValue(),
+                    Cancelled = InvoiceLifecycle.Cancelled.ToDbValue()
+                })).ToList();
+        }
+
         private sealed class CancelState
         {
             public string? Lifecycle { get; set; }

@@ -20,6 +20,7 @@ namespace Module.Tests.Services
 
             public Task<int> CloseArInvoice(long invoiceId, System.Data.IDbTransaction tx) => throw new NotSupportedException();
 
+            public Task<ArDetailDto?> GetArById(long id) => throw new NotSupportedException();
             public Task<PagedList<ArAgingDto>> GetAllAr(ArAgingParameters parameters)
             {
                 Calls.Add(parameters);

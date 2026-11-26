@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Text;
+using NPMotors.Repository.Models;
 using NPMotors.Repository.Models.Dto;
 using NPMotors.Repository.RequestFeatures;
 
@@ -15,6 +16,7 @@ namespace NPMotors.Repository.Interface
         Task<bool> DeleteVehicle(long id);
         Task<PagedList<VehicleResponseDto>> GetAllVehicles(VehicleParameters parameters);
         Task<VehicleResponseDto?> GetVehicleById(long id);
+        Task<VehiclePurchaseResponseDto> PurchaseVehicle(VehiclePurchaseCreateDto purchase, APBill? apBill);
         Task<int> MarkVehicleSold(long vehicleId, long invoiceId, IDbTransaction tx);
     }
 }

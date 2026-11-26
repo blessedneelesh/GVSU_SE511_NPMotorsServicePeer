@@ -61,6 +61,13 @@ namespace NPMotors.Peer.Controllers
             return invoice is null ? NotFound() : Ok(invoice);
         }
 
+        [HttpGet]
+        public async Task<IActionResult> GetSalesInvoiceByCustomer([FromQuery] long customerId)
+        {
+            var items = await _salesInvoiceService.GetSalesInvoiceByCustomer(customerId);
+            return Ok(new { items });
+        }
+
         [HttpPost]
         public async Task<IActionResult> CancelSalesInvoice([FromQuery] long id, [FromBody] SalesInvoiceCancelDto reason)
         {
