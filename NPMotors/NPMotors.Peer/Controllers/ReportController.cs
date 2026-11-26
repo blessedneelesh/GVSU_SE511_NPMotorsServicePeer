@@ -43,5 +43,19 @@ namespace NPMotors.Peer.Controllers
                 return BadRequest(new { errors = new[] { ex.Message } });
             }
         }
+
+        [HttpGet]
+        public async Task<IActionResult> GetOperatingExpenses([FromQuery] ReportPeriodDto period)
+        {
+            try
+            {
+                var summary = await _reportService.GetOperatingExpenses(period);
+                return Ok(summary);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
+        }
     }
 }

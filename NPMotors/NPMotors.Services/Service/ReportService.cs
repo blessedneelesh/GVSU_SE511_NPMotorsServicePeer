@@ -12,6 +12,13 @@ namespace NPMotors.Services.Service
         private const string InterestType = "Interest Received";
         private const string OtherType = "Other Adjustment";
 
+        private const string PaymentSource = "Payment";
+        private const string AdjustmentSource = "Adjustment";
+        private const string BankServiceCharge = "Bank Service Charge";
+        private const string CardProcessingFee = "Card Processing Fee";
+        private static readonly string[] ExcludedPaymentCategories =
+            { "Payroll", "Tax Payment", "Loan Payment", "Customer Refund", "Transfer" };
+
         public ReportService(IReportRepository reportRepository)
         {
             _reportRepository = reportRepository;
@@ -60,6 +67,37 @@ namespace NPMotors.Services.Service
             return summary;
         }
 
+        public async Task<OperatingExpenseSummaryDto> GetOperatingExpenses(ReportPeriodDto period)
+        {
+            var (start, end) = ResolvePeriod(period);
+            var months = period.Period_Type switch
+            {
+                "Month" => 1,
+                "Quarter" => 3,
+                _ => period.Anchor_Date!.Value.Month
+            };
+
+            var employees = await _reportRepository.GetEmployeePayroll(start, end);
+            var (salary, bonus, commission) = CalculatePayroll(employees, months);
+            var candidates = await _reportRepository.GetExpenseCandidates(start, end);
+            var kept = candidates.Where(IsOperatingExpense).ToList();
+
+            var summary = new OperatingExpenseSummaryDto
+            {
+                Period_Type = period.Period_Type,
+                Start_Date = start,
+                End_Date = end,
+                Salary_Expense = salary,
+                Bonus_Expense = bonus,
+                Commission_Expense = commission,
+                Categorized_Payments = kept.Where(c => c.Source_Type == PaymentSource).Sum(c => c.Amount),
+                Bank_Charges = kept.Where(c => c.Source_Type == AdjustmentSource).Sum(c => c.Amount)
+            };
+            summary.Total_Operating_Expenses = summary.Salary_Expense + summary.Bonus_Expense
+                + summary.Commission_Expense + summary.Categorized_Payments + summary.Bank_Charges;
+            return summary;
+        }
+
         // Month -> first to last day of the anchor month; Quarter -> its calendar quarter;
         // YearToDate -> 1 Jan to the anchor date.
         private static (DateTime Start, DateTime End) ResolvePeriod(ReportPeriodDto period)
@@ -95,6 +133,37 @@ namespace NPMotors.Services.Service
                     other += adjustment.Amount;
             }
             return (interest, other);
+        }
+
+        // Salary = sum of Salary / 12 x months; Bonus = sum of Bonus / 12 x months;
+        // Commission = sum of Commission_Sales x Commission_Rate / 100. Multiplied before dividing to keep decimal precision.
+        private static (decimal Salary, decimal Bonus, decimal Commission) CalculatePayroll(List<EmployeePayrollDto> employees, int months)
+        {
+            var salary = employees.Sum(e => e.Salary) * months / 12m;
+            var bonus = employees.Sum(e => e.Bonus) * months / 12m;
+            var commission = employees.Sum(e => e.Commission_Sales * e.Commission_Rate / 100m);
+            return (salary, bonus, commission);
+        }
+
+        // False when reversed. "Payment": false for inventory purchases / AP settlements (Ap_Bill_Id or Vehicle_Id set)
+        // and for the categories Payroll, Tax Payment, Loan Payment, Customer Refund and Transfer; otherwise true.
+        // "Adjustment": true for Bank Service Charge and Card Processing Fee ("Interest Received" is income).
+        private static bool IsOperatingExpense(ExpenseCandidateDto candidate)
+        {
+            if (candidate.Is_Reversed)
+                return false;
+
+            if (candidate.Source_Type == PaymentSource)
+            {
+                if (candidate.Ap_Bill_Id is not null || candidate.Vehicle_Id is not null)
+                    return false;
+                return !ExcludedPaymentCategories.Contains(candidate.Payment_Category);
+            }
+
+            if (candidate.Source_Type == AdjustmentSource)
+                return candidate.Adjustment_Type == BankServiceCharge || candidate.Adjustment_Type == CardProcessingFee;
+
+            return false;
         }
 
         // Sum of Total_Cost over the list, each Vehicle_Id counted once; an empty list gives 0.

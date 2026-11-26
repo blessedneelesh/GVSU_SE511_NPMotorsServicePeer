@@ -32,6 +32,10 @@ namespace Module.Tests.Services
             // Story 27 member: not used by the Story 26 tests.
             public Task<List<SoldVehicleCostDto>> GetSoldVehicleCosts(DateTime start, DateTime end) =>
                 throw new NotSupportedException();
+
+            // Story 28 members: not used by these tests.
+            public Task<List<EmployeePayrollDto>> GetEmployeePayroll(DateTime start, DateTime end) => throw new NotSupportedException();
+            public Task<List<ExpenseCandidateDto>> GetExpenseCandidates(DateTime start, DateTime end) => throw new NotSupportedException();
         }
 
         private readonly FakeReportRepository _repository = new();
