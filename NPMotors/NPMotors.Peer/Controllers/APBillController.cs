@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using NPMotors.Repository.Models.Dto;
+using NPMotors.Repository.RequestFeatures;
 using NPMotors.Services.Abstractions.ServiceInterfaces;
 
 namespace NPMotors.Peer.Controllers
@@ -14,6 +15,13 @@ namespace NPMotors.Peer.Controllers
         public APBillController(IAPBillService apBillService)
         {
             _apBillService = apBillService;
+        }
+
+        [HttpGet("/Ap/GetAllAp")]
+        public async Task<IActionResult> GetAllAp([FromQuery] ApAgingParameters parameters)
+        {
+            var items = await _apBillService.GetAllAp(parameters);
+            return Ok(new { items, metaData = items.MetaData });
         }
 
         [HttpPost("{apBillId:long}")]
