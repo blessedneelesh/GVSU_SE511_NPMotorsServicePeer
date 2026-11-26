@@ -28,6 +28,10 @@ namespace Module.Tests.Services
                 AdjustmentCalls.Add((start, end));
                 return Task.FromResult(Adjustments);
             }
+
+            // Story 27 member: not used by the Story 26 tests.
+            public Task<List<SoldVehicleCostDto>> GetSoldVehicleCosts(DateTime start, DateTime end) =>
+                throw new NotSupportedException();
         }
 
         private readonly FakeReportRepository _repository = new();

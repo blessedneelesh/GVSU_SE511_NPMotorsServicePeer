@@ -5,5 +5,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
     public interface IReportService
     {
         Task<RevenueSummaryDto> GetRevenue(ReportPeriodDto period);
+        Task<CogsSummaryDto> GetCostOfGoodsSold(ReportPeriodDto period);
     }
 }

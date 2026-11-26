@@ -53,5 +53,23 @@ namespace NPMotors.Repository.Repositories
                 new { Start = start.Date, End = end.Date });
             return rows.ToList();
         }
+
+        // Vehicles on posted invoices only: unsold stock and cancelled sales are not returned, and AP tables are not read.
+        // uq_sales_invoice_vehicle_posted allows one posted invoice per vehicle, so each vehicle appears once.
+        public async Task<List<SoldVehicleCostDto>> GetSoldVehicleCosts(DateTime start, DateTime end)
+        {
+            using IDbConnection connection = _context.GetDatabaseConnection();
+
+            var rows = await connection.QueryAsync<SoldVehicleCostDto>(
+                @"SELECT v.id AS Vehicle_Id, v.vin AS Vin, si.id AS Invoice_Id, si.number AS Invoice_Number,
+                         si.date::timestamp AS Invoice_Date, COALESCE(v.total_cost, 0) AS Total_Cost
+                  FROM sales_invoice si
+                  JOIN vehicle v ON v.id = si.vehicle_id
+                  WHERE si.lifecycle = 'posted'
+                    AND si.date BETWEEN @Start AND @End
+                  ORDER BY si.date, si.id",
+                new { Start = start.Date, End = end.Date });
+            return rows.ToList();
+        }
     }
 }

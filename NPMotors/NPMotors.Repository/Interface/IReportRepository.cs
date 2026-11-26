@@ -6,5 +6,6 @@ namespace NPMotors.Repository.Interface
     {
         Task<SalesRevenueTotalsDto> GetSalesRevenue(DateTime start, DateTime end);
         Task<List<IncomeAdjustmentDto>> GetIncomeAdjustments(DateTime start, DateTime end);
+        Task<List<SoldVehicleCostDto>> GetSoldVehicleCosts(DateTime start, DateTime end);
     }
 }

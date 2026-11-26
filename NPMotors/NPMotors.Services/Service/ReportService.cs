@@ -41,6 +41,25 @@ namespace NPMotors.Services.Service
             return summary;
         }
 
+        public async Task<CogsSummaryDto> GetCostOfGoodsSold(ReportPeriodDto period)
+        {
+            var (start, end) = ResolvePeriod(period);
+            var vehicles = await _reportRepository.GetSoldVehicleCosts(start, end);
+
+            var summary = new CogsSummaryDto
+            {
+                Period_Type = period.Period_Type,
+                Start_Date = start,
+                End_Date = end,
+                Vehicle_Cogs = CalculateVehicleCogs(vehicles),
+                // No part sale or usage records exist yet, so parts COGS stays zero.
+                Parts_Cogs = 0m,
+                Vehicles_Sold_Count = vehicles.Select(v => v.Vehicle_Id).Distinct().Count()
+            };
+            summary.Total_Cogs = summary.Vehicle_Cogs + summary.Parts_Cogs;
+            return summary;
+        }
+
         // Month -> first to last day of the anchor month; Quarter -> its calendar quarter;
         // YearToDate -> 1 Jan to the anchor date.
         private static (DateTime Start, DateTime End) ResolvePeriod(ReportPeriodDto period)
@@ -76,6 +95,14 @@ namespace NPMotors.Services.Service
                     other += adjustment.Amount;
             }
             return (interest, other);
+        }
+
+        // Sum of Total_Cost over the list, each Vehicle_Id counted once; an empty list gives 0.
+        private static decimal CalculateVehicleCogs(List<SoldVehicleCostDto> vehicles)
+        {
+            return vehicles
+                .GroupBy(v => v.Vehicle_Id)
+                .Sum(g => g.First().Total_Cost);
         }
 
         // Vehicle + Service + Fee + Interest + Other - Discounts.
