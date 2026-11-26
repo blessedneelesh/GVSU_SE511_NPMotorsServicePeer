@@ -54,15 +54,16 @@ namespace NPMotors.Repository.Repositories
 
         private const string OpenBills = "ap.balance > 0 AND LOWER(ap.status) IN ('unpaid', 'partial')";
 
-        // Open bills only (status unpaid/partial and balance > 0). "overdue" = past due date as of @AsOfDate;
-        // "unpaid"/"partial" = stored status and not past due. Days_Overdue and Status are set by the service.
+        // No status = every bill, paid included. "overdue" = open and past due date as of @AsOfDate;
+        // "unpaid"/"partial" = stored status and not past due; "paid" = fully settled (balance <= 0).
+        // Days_Overdue and Status are set by the service.
         public async Task<PagedList<ApBillResponseDto>> GetAllApBills(ApBillParameters parameters)
         {
             using IDbConnection connection = _context.GetDatabaseConnection();
 
             var asOfDate = (parameters.AsOfDate ?? DateTime.Today).Date;
             var status = parameters.Status?.Trim().ToLowerInvariant();
-            var whereClauses = new List<string> { OpenBills };
+            var whereClauses = new List<string>();
             var queryParams = new DynamicParameters();
             queryParams.Add("AsOfDate", asOfDate, DbType.Date);
 
@@ -74,7 +75,12 @@ namespace NPMotors.Repository.Repositories
 
             if (status == "overdue")
             {
+                whereClauses.Add(OpenBills);
                 whereClauses.Add("ap.due_date < @AsOfDate");
+            }
+            else if (status == "paid")
+            {
+                whereClauses.Add("ap.balance <= 0");
             }
             else if (status == "unpaid" || status == "partial")
             {
@@ -83,7 +89,7 @@ namespace NPMotors.Repository.Repositories
                 queryParams.Add("Status", status);
             }
 
-            var whereSql = " WHERE " + string.Join(" AND ", whereClauses);
+            var whereSql = whereClauses.Count > 0 ? " WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
             const string from = "FROM ap_bill ap JOIN vendor v ON v.id = ap.vendor_id";
 
             var count = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) {from}{whereSql}", queryParams);

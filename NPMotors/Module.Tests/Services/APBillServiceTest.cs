@@ -1006,7 +1006,6 @@ namespace Module.Tests.Services
         [InlineData(0, 5, null, null)]
         [InlineData(1, 0, null, null)]
         [InlineData(1, 5, 0L, null)]
-        [InlineData(1, 5, null, "paid")]
         [InlineData(1, 5, null, "whatever")]
         public async Task GetAllApBills_InvalidParameters_ThrowsAndSkipsRepository(int pageNumber, int pageSize, long? vendorId, string? status)
         {

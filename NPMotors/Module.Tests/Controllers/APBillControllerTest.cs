@@ -628,11 +628,11 @@ namespace Module.Tests.Controllers
             var (response, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(3, Items(json).Count);
+            Assert.Equal(4, Items(json).Count);
             var meta = Prop(json, "metaData");
             foreach (var name in new[] { "currentPage", "totalPages", "pageSize", "totalCount" })
                 Assert.NotNull(((JObject)meta).GetValue(name, StringComparison.OrdinalIgnoreCase));
-            Assert.Equal(3, (int)Prop(meta, "totalCount"));
+            Assert.Equal(4, (int)Prop(meta, "totalCount"));
         }
 
         [Fact]
@@ -682,13 +682,13 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetAllApBills_NoStatus_ListsOpenBillsAndNeverPaidOnes()
+        public async Task GetAllApBills_NoStatus_ListsEveryBillIncludingPaid()
         {
             await SeedAgingBillsAsync();
 
             var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}");
 
-            Assert.Equal(new[] { 1, 2, 3 }.Select(n => $"AP-{_marker}-{n}").OrderBy(x => x),
+            Assert.Equal(new[] { 1, 2, 3, 4 }.Select(n => $"AP-{_marker}-{n}").OrderBy(x => x),
                 Items(json).Select(i => Prop(i, "number").ToString()).OrderBy(x => x));
         }
 
@@ -696,6 +696,7 @@ namespace Module.Tests.Controllers
         [InlineData("Overdue", new[] { 1, 2 })]
         [InlineData("Unpaid", new[] { 3 })]
         [InlineData("Partial", new int[0])]
+        [InlineData("Paid", new[] { 4 })]
         [InlineData("overdue", new[] { 1, 2 })]
         public async Task GetAllApBills_StatusFilter_ReturnsMatchingBills(string status, int[] expected)
         {
@@ -708,7 +709,6 @@ namespace Module.Tests.Controllers
         }
 
         [Theory]
-        [InlineData("Status=paid")]
         [InlineData("Status=whatever")]
         [InlineData("PageNumber=0")]
         [InlineData("PageSize=0")]
@@ -740,12 +740,12 @@ namespace Module.Tests.Controllers
             var (_, json) = await GetAllApBillsAsync($"AsOfDate={AsOf}&VendorId={_vendorId}&PageNumber=2&PageSize=2");
 
             var numbers = Items(json).Select(i => Prop(i, "number").ToString()).ToList();
-            // Ordered by due date: P1 (10-01), P2 (10-15) | P3 (12-01).
-            Assert.Equal(new[] { $"AP-{_marker}-3" }, numbers);
+            // Ordered by due date: P4 (09-01), P1 (10-01) | P2 (10-15), P3 (12-01).
+            Assert.Equal(new[] { $"AP-{_marker}-2", $"AP-{_marker}-3" }, numbers);
             var meta = Prop(json, "metaData");
             Assert.Equal(2, (int)Prop(meta, "currentPage"));
             Assert.Equal(2, (int)Prop(meta, "totalPages"));
-            Assert.Equal(3, (int)Prop(meta, "totalCount"));
+            Assert.Equal(4, (int)Prop(meta, "totalCount"));
         }
 
         [Fact]

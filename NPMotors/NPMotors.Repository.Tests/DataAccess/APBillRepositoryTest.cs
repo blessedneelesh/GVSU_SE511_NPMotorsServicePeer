@@ -417,12 +417,20 @@ namespace NPMotors.Repository.Tests.DataAccess
             });
 
         [Fact]
-        public async Task GetAllApBills_NoStatus_ReturnsOpenBillsOnlyAndNeverPaidOnes()
+        public async Task GetAllApBills_NoStatus_ReturnsEveryBillOfTheVendorPaidIncluded()
         {
             var result = await GetAllApBillsAsync();
 
-            Assert.Equal(_openBillId, Assert.Single(result).Id);
-            Assert.Equal(1, result.MetaData.TotalCount);
+            Assert.Equal(new[] { _openBillId, _paidBillId }.OrderBy(x => x), result.Select(r => r.Id).OrderBy(x => x));
+            Assert.Equal(2, result.MetaData.TotalCount);
+        }
+
+        [Fact]
+        public async Task GetAllApBills_Paid_BalanceZeroOrLess()
+        {
+            var result = await GetAllApBillsAsync("Paid", asOf: AfterDue);
+
+            Assert.Equal(_paidBillId, Assert.Single(result).Id);
         }
 
         [Fact]
@@ -452,17 +460,17 @@ namespace NPMotors.Repository.Tests.DataAccess
         [Fact]
         public async Task GetAllApBills_AgingBucket_FromDaysPastDue()
         {
-            Assert.Equal("Current", (await GetAllApBillsAsync(asOf: BeforeDue)).Single().Aging_Bucket);
-            Assert.Equal("1-30", (await GetAllApBillsAsync(asOf: AfterDue)).Single().Aging_Bucket);
-            Assert.Equal("31-60", (await GetAllApBillsAsync(asOf: new DateTime(2027, 1, 15))).Single().Aging_Bucket);
-            Assert.Equal("61-90", (await GetAllApBillsAsync(asOf: new DateTime(2027, 2, 15))).Single().Aging_Bucket);
-            Assert.Equal("Over 90", (await GetAllApBillsAsync(asOf: new DateTime(2027, 4, 1))).Single().Aging_Bucket);
+            Assert.Equal("Current", (await GetAllApBillsAsync(asOf: BeforeDue)).Single(r => r.Id == _openBillId).Aging_Bucket);
+            Assert.Equal("1-30", (await GetAllApBillsAsync(asOf: AfterDue)).Single(r => r.Id == _openBillId).Aging_Bucket);
+            Assert.Equal("31-60", (await GetAllApBillsAsync(asOf: new DateTime(2027, 1, 15))).Single(r => r.Id == _openBillId).Aging_Bucket);
+            Assert.Equal("61-90", (await GetAllApBillsAsync(asOf: new DateTime(2027, 2, 15))).Single(r => r.Id == _openBillId).Aging_Bucket);
+            Assert.Equal("Over 90", (await GetAllApBillsAsync(asOf: new DateTime(2027, 4, 1))).Single(r => r.Id == _openBillId).Aging_Bucket);
         }
 
         [Fact]
         public async Task GetAllApBills_VendorBalance_SumsTheVendorsOpenBalances()
         {
-            Assert.Equal(2500m, (await GetAllApBillsAsync()).Single().Vendor_Balance);
+            Assert.Equal(2500m, (await GetAllApBillsAsync()).Single(r => r.Id == _openBillId).Vendor_Balance);
             Assert.Equal(700m, (await GetAllApBillsAsync(vendorId: _otherVendorId)).Single().Vendor_Balance);
         }
 
@@ -519,6 +527,20 @@ namespace NPMotors.Repository.Tests.DataAccess
         }
 
         [Fact]
+        public async Task GetAllApBills_PaidBill_StillCarriesTheVendorsOpenBalance()
+        {
+            var item = (await GetAllApBillsAsync()).Single(r => r.Id == _paidBillId);
+
+            Assert.Equal(2500m, item.Vendor_Balance);
+        }
+
+        [Fact]
+        public async Task GetAllApBills_UnknownStatus_IsIgnored()
+        {
+            Assert.Equal(2, (await GetAllApBillsAsync("whatever")).Count);
+        }
+
+        [Fact]
         public async Task GetAllApBills_OrderedByDueDate()
         {
             var result = await GetAllApBillsAsync();
@@ -530,11 +552,14 @@ namespace NPMotors.Repository.Tests.DataAccess
         public async Task GetAllApBills_Paging_SplitsRowsAndKeepsTotalCount()
         {
             var first = await GetAllApBillsAsync(pageNumber: 1, pageSize: 1);
+            var second = await GetAllApBillsAsync(pageNumber: 2, pageSize: 1);
 
             Assert.Single(first);
-            Assert.Equal(1, first.MetaData.TotalCount);
-            Assert.Equal(1, first.MetaData.TotalPages);
-            Assert.Empty(await GetAllApBillsAsync(pageNumber: 2, pageSize: 1));
+            Assert.Single(second);
+            Assert.NotEqual(first[0].Id, second[0].Id);
+            Assert.Equal(2, first.MetaData.TotalCount);
+            Assert.Equal(2, first.MetaData.TotalPages);
+            Assert.Equal(2, second.MetaData.CurrentPage);
         }
 
         // ---- GetApById ----
@@ -619,7 +644,7 @@ namespace NPMotors.Repository.Tests.DataAccess
             var result = await GetAllApBillsAsync(pageNumber: 5, pageSize: 1);
 
             Assert.Empty(result);
-            Assert.Equal(1, result.MetaData.TotalCount);
+            Assert.Equal(2, result.MetaData.TotalCount);
         }
     }
 }

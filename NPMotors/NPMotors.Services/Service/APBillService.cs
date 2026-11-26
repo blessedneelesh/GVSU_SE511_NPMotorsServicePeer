@@ -134,7 +134,7 @@ namespace NPMotors.Services.Service
             return page;
         }
 
-        // PageNumber and PageSize >= 1, VendorId > 0 when given, Status "unpaid" | "partial" | "overdue" or empty.
+        // PageNumber and PageSize >= 1, VendorId > 0 when given, Status "unpaid" | "partial" | "overdue" | "paid" or empty.
         private static void ValidateApBillParameters(ApBillParameters parameters)
         {
             if (parameters.PageNumber < 1 || parameters.PageSize < 1)
@@ -142,8 +142,8 @@ namespace NPMotors.Services.Service
             if (parameters.VendorId is <= 0)
                 throw new ValidationException("VendorId must be greater than zero.");
             var status = parameters.Status?.Trim().ToLowerInvariant();
-            if (!string.IsNullOrEmpty(status) && status != Unpaid && status != Partial && status != "overdue")
-                throw new ValidationException("Status must be unpaid, partial or overdue.");
+            if (!string.IsNullOrEmpty(status) && status != Unpaid && status != Partial && status != Paid && status != "overdue")
+                throw new ValidationException("Status must be unpaid, partial, overdue or paid.");
         }
 
         public async Task<ApDetailDto?> GetApById(long id)
