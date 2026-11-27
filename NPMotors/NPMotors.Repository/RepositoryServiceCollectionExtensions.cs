@@ -26,6 +26,8 @@ namespace NPMotors.Repository
             services.AddScoped<IBankPaymentRepository, BankPaymentRepository>();
             services.AddScoped<ITransactionRepository, TransactionRepository>();
             services.AddScoped<IBankStatementLineRepository, BankStatementLineRepository>();
+            services.AddScoped<IReportRepository, ReportRepository>();
+            services.AddScoped<IDashboardRepository, DashboardRepository>();
 
             return services;
         }

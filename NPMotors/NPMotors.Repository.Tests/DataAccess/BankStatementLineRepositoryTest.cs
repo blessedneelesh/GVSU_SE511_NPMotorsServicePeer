@@ -318,7 +318,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
             var result = await ListAsync(accountId, month: "2026-03");
 
-            Assert.Equal(new[] { first, middle, last }, result.Select(l => l.Id).ToArray());
+            Assert.Equal(new[] { last, middle, first }, result.Select(l => l.Id).ToArray());
             Assert.Equal(3, result.MetaData.TotalCount);
         }
 
@@ -422,7 +422,7 @@ namespace NPMotors.Repository.Tests.DataAccess
         // ---- GetStatementLines: order, paging, joins ----
 
         [Fact]
-        public async Task GetStatementLines_OrderedByPostedDateThenId()
+        public async Task GetStatementLines_OrderedByPostedDateThenIdNewestFirst()
         {
             var accountId = await InsertAccountAsync();
             var march20 = await InsertLineAsync(accountId, new DateTime(2026, 3, 20));
@@ -432,7 +432,7 @@ namespace NPMotors.Repository.Tests.DataAccess
 
             var result = await ListAsync(accountId);
 
-            Assert.Equal(new[] { march10First, march10Second, march15, march20 }, result.Select(l => l.Id).ToArray());
+            Assert.Equal(new[] { march20, march15, march10Second, march10First }, result.Select(l => l.Id).ToArray());
         }
 
         [Fact]
@@ -445,7 +445,8 @@ namespace NPMotors.Repository.Tests.DataAccess
 
             var result = await ListAsync(accountId, page: 2, size: 2);
 
-            Assert.Equal(new[] { ids[2], ids[3] }, result.Select(l => l.Id).ToArray());
+            // Newest first: March 5, 4 | 3, 2 | 1, so the second page holds March 3 and March 2.
+            Assert.Equal(new[] { ids[2], ids[1] }, result.Select(l => l.Id).ToArray());
             Assert.Equal(5, result.MetaData.TotalCount);
             Assert.Equal(2, result.MetaData.CurrentPage);
             Assert.Equal(2, result.MetaData.PageSize);

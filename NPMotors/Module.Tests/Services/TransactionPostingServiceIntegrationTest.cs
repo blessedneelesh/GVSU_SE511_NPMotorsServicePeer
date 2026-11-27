@@ -142,8 +142,9 @@ namespace Module.Tests.Services
 
         // ---- Story 9: simulated statement lines, end to end ----
 
+        // The repository lists newest first; the running balance checks read the lines oldest first (posting order).
         private async Task<List<StatementLineResponseDto>> LinesAsync() =>
-            (await new BankStatementLineRepository(_repositoryContext).GetStatementLines(
+            Enumerable.Reverse(await new BankStatementLineRepository(_repositoryContext).GetStatementLines(
                 new StatementLineParameters { BankAccountId = _accountId, PageSize = 100 })).ToList();
 
         private PostTransactionRequest DatedRequest(Direction direction, decimal amount, DateTime date) => new()
