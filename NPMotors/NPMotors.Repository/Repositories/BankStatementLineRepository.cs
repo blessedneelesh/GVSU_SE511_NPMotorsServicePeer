@@ -98,7 +98,7 @@ namespace NPMotors.Repository.Repositories
             queryParams.Add("Limit", parameters.PageSize);
 
             var lines = (await connection.QueryAsync<StatementLineResponseDto>(
-                $"SELECT {StatementLineColumns} FROM {FromSql}{whereSql} ORDER BY l.posted_date, l.id OFFSET @Offset LIMIT @Limit",
+                $"SELECT {StatementLineColumns} FROM {FromSql}{whereSql} ORDER BY l.posted_date DESC, l.id DESC OFFSET @Offset LIMIT @Limit",
                 queryParams)).ToList();
 
             return new PagedList<StatementLineResponseDto>(lines, count, parameters.PageNumber, parameters.PageSize);

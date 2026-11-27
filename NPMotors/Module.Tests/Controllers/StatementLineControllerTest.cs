@@ -163,14 +163,14 @@ namespace Module.Tests.Controllers
         }
 
         [Fact]
-        public async Task GetStatementLines_ListsInStatementDateOrder()
+        public async Task GetStatementLines_ListsNewestFirst()
         {
             var late = await SeedAsync(new DateTime(2026, 3, 20));
             var early = await SeedAsync(new DateTime(2026, 3, 5));
 
             var body = await GetAllAsync($"BankAccountId={_accountId}");
 
-            Assert.Equal(new[] { early, late }, body.Items.Select(l => l.Id).ToArray());
+            Assert.Equal(new[] { late, early }, body.Items.Select(l => l.Id).ToArray());
         }
 
         [Fact]
