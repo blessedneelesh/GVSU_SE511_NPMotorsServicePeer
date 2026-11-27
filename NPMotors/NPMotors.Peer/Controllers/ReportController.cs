@@ -71,5 +71,19 @@ namespace NPMotors.Peer.Controllers
                 return BadRequest(new { errors = new[] { ex.Message } });
             }
         }
+
+        [HttpGet]
+        public async Task<IActionResult> ComparePeriods([FromQuery] ComparePeriodsDto comparison)
+        {
+            try
+            {
+                var result = await _reportService.ComparePeriods(comparison, User.Identity?.Name ?? string.Empty);
+                return Ok(result);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
+        }
     }
 }

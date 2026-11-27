@@ -126,6 +126,44 @@ namespace NPMotors.Services.Service
             return report;
         }
 
+        public async Task<PeriodComparisonDto> ComparePeriods(ComparePeriodsDto comparison, string generatedBy)
+        {
+            if (comparison.Current_Anchor_Date is null)
+                throw new ValidationException("Current_Anchor_Date is required.");
+
+            var currentAnchor = comparison.Current_Anchor_Date.Value;
+            var previousAnchor = comparison.Previous_Anchor_Date ?? comparison.Period_Type switch
+            {
+                "Month" => currentAnchor.AddMonths(-1),
+                "Quarter" => currentAnchor.AddMonths(-3),
+                "YearToDate" => currentAnchor.AddYears(-1),
+                _ => throw new ValidationException("Period_Type must be Month, Quarter or YearToDate.")
+            };
+
+            // Both periods use the same Period_Type, so they follow the same rules.
+            var current = new ReportPeriodDto { Period_Type = comparison.Period_Type, Anchor_Date = currentAnchor };
+            var previous = new ReportPeriodDto { Period_Type = comparison.Period_Type, Anchor_Date = previousAnchor };
+            var (currentStart, currentEnd) = ResolvePeriod(current);
+            var (previousStart, previousEnd) = ResolvePeriod(previous);
+            EnsureNoOverlap(currentStart, currentEnd, previousStart, previousEnd);
+
+            var currentReport = await GetProfitAndLoss(current, generatedBy);
+            var previousReport = await GetProfitAndLoss(previous, generatedBy);
+
+            return new PeriodComparisonDto
+            {
+                Current = currentReport,
+                Previous = previousReport,
+                Revenue_Change_Pct = CalculatePercentageChange(currentReport.Total_Revenue, previousReport.Total_Revenue),
+                Cogs_Change_Pct = CalculatePercentageChange(currentReport.Total_Cogs, previousReport.Total_Cogs),
+                Gross_Profit_Change_Pct = CalculatePercentageChange(currentReport.Gross_Profit, previousReport.Gross_Profit),
+                Operating_Expense_Change_Pct = CalculatePercentageChange(currentReport.Total_Operating_Expenses, previousReport.Total_Operating_Expenses),
+                Net_Profit_Change_Pct = CalculatePercentageChange(currentReport.Net_Profit, previousReport.Net_Profit),
+                Gross_Margin_Change = currentReport.Gross_Margin - previousReport.Gross_Margin,
+                Net_Margin_Change = currentReport.Net_Margin - previousReport.Net_Margin
+            };
+        }
+
         // Month -> first to last day of the anchor month; Quarter -> its calendar quarter;
         // YearToDate -> 1 Jan to the anchor date.
         private static (DateTime Start, DateTime End) ResolvePeriod(ReportPeriodDto period)
@@ -192,6 +230,22 @@ namespace NPMotors.Services.Service
                 return candidate.Adjustment_Type == BankServiceCharge || candidate.Adjustment_Type == CardProcessingFee;
 
             return false;
+        }
+
+        // (current - previous) / |previous| x 100 rounded to 2 decimals; null ("unavailable") when previous is 0.
+        // |previous| keeps the sign right for a negative profit: -1,000 -> 500 gives +150%.
+        private static decimal? CalculatePercentageChange(decimal current, decimal previous)
+        {
+            if (previous == 0m)
+                return null;
+            return Math.Round((current - previous) / Math.Abs(previous) * 100m, 2, MidpointRounding.AwayFromZero);
+        }
+
+        // previousEnd must be before currentStart, otherwise the periods overlap (a business-rule violation, 400).
+        private static void EnsureNoOverlap(DateTime currentStart, DateTime currentEnd, DateTime previousStart, DateTime previousEnd)
+        {
+            if (previousEnd >= currentStart)
+                throw new ValidationException("The previous period must end before the current period starts.");
         }
 
         // totalRevenue - totalCogs.
