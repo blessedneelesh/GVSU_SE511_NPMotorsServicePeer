@@ -98,6 +98,34 @@ namespace NPMotors.Services.Service
             return summary;
         }
 
+        public async Task<ProfitAndLossDto> GetProfitAndLoss(ReportPeriodDto period, string generatedBy)
+        {
+            // All three resolve the same period, so they use the same Start_Date and End_Date.
+            var revenue = await GetRevenue(period);
+            var cogs = await GetCostOfGoodsSold(period);
+            var expenses = await GetOperatingExpenses(period);
+
+            var report = new ProfitAndLossDto
+            {
+                Period_Type = period.Period_Type,
+                Start_Date = revenue.Start_Date,
+                End_Date = revenue.End_Date,
+                Revenue = revenue,
+                Cogs = cogs,
+                Operating_Expenses = expenses,
+                Total_Revenue = revenue.Total_Revenue,
+                Total_Cogs = cogs.Total_Cogs,
+                Total_Operating_Expenses = expenses.Total_Operating_Expenses
+            };
+            report.Gross_Profit = CalculateGrossProfit(report.Total_Revenue, report.Total_Cogs);
+            report.Net_Profit = CalculateNetProfit(report.Gross_Profit, report.Total_Operating_Expenses);
+            report.Gross_Margin = CalculateMargin(report.Gross_Profit, report.Total_Revenue);
+            report.Net_Margin = CalculateMargin(report.Net_Profit, report.Total_Revenue);
+            report.Generated_Date = DateTime.Now;
+            report.Generated_By = generatedBy;
+            return report;
+        }
+
         // Month -> first to last day of the anchor month; Quarter -> its calendar quarter;
         // YearToDate -> 1 Jan to the anchor date.
         private static (DateTime Start, DateTime End) ResolvePeriod(ReportPeriodDto period)
@@ -164,6 +192,26 @@ namespace NPMotors.Services.Service
                 return candidate.Adjustment_Type == BankServiceCharge || candidate.Adjustment_Type == CardProcessingFee;
 
             return false;
+        }
+
+        // totalRevenue - totalCogs.
+        private static decimal CalculateGrossProfit(decimal totalRevenue, decimal totalCogs)
+        {
+            return totalRevenue - totalCogs;
+        }
+
+        // grossProfit - totalOperatingExpenses.
+        private static decimal CalculateNetProfit(decimal grossProfit, decimal totalOperatingExpenses)
+        {
+            return grossProfit - totalOperatingExpenses;
+        }
+
+        // profit / totalRevenue x 100 rounded to 2 decimals; null when totalRevenue is 0. A negative profit gives a negative margin.
+        private static decimal? CalculateMargin(decimal profit, decimal totalRevenue)
+        {
+            if (totalRevenue == 0m)
+                return null;
+            return Math.Round(profit / totalRevenue * 100m, 2, MidpointRounding.AwayFromZero);
         }
 
         // Sum of Total_Cost over the list, each Vehicle_Id counted once; an empty list gives 0.

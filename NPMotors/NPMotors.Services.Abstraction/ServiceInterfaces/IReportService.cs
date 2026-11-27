@@ -7,5 +7,6 @@ namespace NPMotors.Services.Abstractions.ServiceInterfaces
         Task<RevenueSummaryDto> GetRevenue(ReportPeriodDto period);
         Task<CogsSummaryDto> GetCostOfGoodsSold(ReportPeriodDto period);
         Task<OperatingExpenseSummaryDto> GetOperatingExpenses(ReportPeriodDto period);
+        Task<ProfitAndLossDto> GetProfitAndLoss(ReportPeriodDto period, string generatedBy);
     }
 }

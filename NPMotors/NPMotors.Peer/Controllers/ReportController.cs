@@ -57,5 +57,19 @@ namespace NPMotors.Peer.Controllers
                 return BadRequest(new { errors = new[] { ex.Message } });
             }
         }
+
+        [HttpGet]
+        public async Task<IActionResult> GetProfitAndLoss([FromQuery] ReportPeriodDto period)
+        {
+            try
+            {
+                var report = await _reportService.GetProfitAndLoss(period, User.Identity?.Name ?? string.Empty);
+                return Ok(report);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { errors = new[] { ex.Message } });
+            }
+        }
     }
 }
