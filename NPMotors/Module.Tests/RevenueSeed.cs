@@ -45,6 +45,7 @@ namespace Module.Tests
             var p = new { Pattern = Marker + "%", BankId };
             const string accounts = "SELECT id FROM bank_account WHERE bank_id = @BankId";
             await c.ExecuteAsync($"DELETE FROM bank_statement_line WHERE bank_account_id IN ({accounts})", p);
+            await c.ExecuteAsync($"DELETE FROM bank_payment WHERE bank_account_id IN ({accounts})", p);
             await c.ExecuteAsync($@"DELETE FROM ""transaction"" WHERE reverses_transaction_id IS NOT NULL AND bank_account_id IN ({accounts})", p);
             await c.ExecuteAsync($@"DELETE FROM ""transaction"" WHERE bank_account_id IN ({accounts})", p);
             await c.ExecuteAsync("DELETE FROM sales_invoice WHERE customer_id IN (SELECT id FROM customer WHERE first_name LIKE @Pattern)", p);
@@ -60,7 +61,7 @@ namespace Module.Tests
         private int Next() => ++_sequence;
 
         public async Task<long> AddInvoiceAsync(DateTime date, decimal salePrice, decimal fees = 0m, decimal discount = 0m, decimal tax = 0m,
-            string lifecycle = "posted", string paymentStatus = "unpaid", long? vehicleId = null)
+            string lifecycle = "posted", string paymentStatus = "unpaid", long? vehicleId = null, long? salespersonId = null)
         {
             using var c = _open();
             var total = salePrice + tax + fees - discount;
@@ -73,7 +74,7 @@ namespace Module.Tests
                   RETURNING id",
                 new
                 {
-                    Number = $"{Marker}-SI-{Next()}", Date = date.Date, CustomerId, SalespersonId, VehicleId = vehicleId, SalePrice = salePrice, Tax = tax,
+                    Number = $"{Marker}-SI-{Next()}", Date = date.Date, CustomerId, SalespersonId = salespersonId ?? SalespersonId, VehicleId = vehicleId, SalePrice = salePrice, Tax = tax,
                     Fees = fees, Discount = discount, Total = total, Paid = paid, Balance = total - paid, PaymentStatus = paymentStatus,
                     Lifecycle = lifecycle, CancelReason = lifecycle == "cancelled" ? "itest cancel" : null
                 });
@@ -95,17 +96,49 @@ namespace Module.Tests
         }
 
         // An AP bill for the seeded vendor (the vendor side of a vehicle purchase).
-        public async Task AddApBillAsync(decimal amount, decimal paid)
+        public async Task<long> AddApBillAsync(decimal amount, decimal paid)
         {
             using var c = _open();
-            await c.ExecuteAsync(
+            return await c.ExecuteScalarAsync<long>(
                 @"INSERT INTO ap_bill (number, vendor_id, amount, paid, balance, status, created_by)
-                  VALUES (@Number, @VendorId, @Amount, @Paid, @Balance, @Status, 'itest')",
+                  VALUES (@Number, @VendorId, @Amount, @Paid, @Balance, @Status, 'itest')
+                  RETURNING id",
                 new
                 {
                     Number = $"{Marker}-AP-{Next()}", VendorId, Amount = amount, Paid = paid, Balance = amount - paid,
                     Status = paid >= amount ? "paid" : paid > 0 ? "partial" : "unpaid"
                 });
+        }
+
+        // An employee (named with the marker) with annual salary and bonus and a commission rate (0-100).
+        public async Task<long> AddEmployeeAsync(decimal? salary, decimal? bonus, decimal? commissionRate, string status = "active")
+        {
+            using var c = _open();
+            return await c.ExecuteScalarAsync<long>(
+                @"INSERT INTO employee (first_name, last_name, salary, bonus, commission, status)
+                  VALUES (@Name, @Last, @Salary, @Bonus, @Rate, @Status) RETURNING id",
+                new { Name = Marker, Last = $"Emp{Next()}", Salary = salary, Bonus = bonus, Rate = commissionRate, Status = status });
+        }
+
+        // A bank payment with its transaction (outgoing). A payment needs a payee and category unless it is
+        // linked to an AP bill or a vehicle. Returns the payment id and the transaction id.
+        public async Task<(long PaymentId, long TransactionId)> AddPaymentAsync(DateTime date, decimal amount, string? category,
+            long? apBillId = null, long? vehicleId = null, string status = "Posted", string transactionStatus = "posted")
+        {
+            using var c = _open();
+            var transactionId = await InsertTransactionAsync(c, date, amount, "out", transactionStatus, "BankPayment", null);
+            var paymentId = await c.ExecuteScalarAsync<long>(
+                @"INSERT INTO bank_payment (transaction_id, bank_account_id, ap_bill_id, vehicle_id, payment_number, payment_date, payment_method,
+                                            amount, payee, payment_category, status, created_by)
+                  VALUES (@TransactionId, @AccountId, @ApBillId, @VehicleId, @Number, @Date, 'Check',
+                          @Amount, @Payee, @Category, @Status, 'itest')
+                  RETURNING id",
+                new
+                {
+                    TransactionId = transactionId, AccountId, ApBillId = apBillId, VehicleId = vehicleId, Number = $"{Marker}-PAY-{Next()}",
+                    Date = date.Date, Amount = amount, Payee = category is null ? null : "Acme", Category = category, Status = status
+                });
+            return (paymentId, transactionId);
         }
 
         // A bank adjustment: a transaction plus its matched statement line. Returns the transaction id.
